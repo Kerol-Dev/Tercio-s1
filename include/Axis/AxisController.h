@@ -9,7 +9,7 @@
 // Small PID used by AxisController
 struct SimplePID
 {
-  double kp{3.0}, ki{0.0}, kd{0.0};
+  double kp{1.0}, ki{0.0}, kd{0.0};
   double ePrev{0.0}, integ{0.0};
   double outMin{-10.0}, outMax{+10.0};
 

@@ -47,7 +47,7 @@ enum : uint8_t
 // -----------------------------------------------------------------------------
 static constexpr uint8_t PIN_STEP = PB14;
 static constexpr uint8_t PIN_DIR = PB15;
-static constexpr uint8_t PIN_EN = PB5;
+static constexpr uint8_t PIN_EN = PB3;
 static constexpr uint8_t PIN_I2C_SDA = PB7;
 static constexpr uint8_t PIN_I2C_SCL = PA15;
 static constexpr uint8_t PIN_EXT_I2C_SDA = PA8;
@@ -73,7 +73,7 @@ TMC2209Stepper driver(&TMCSerial, R_SENSE, 0b00);
 AxisController axis(encoder, stepgen, driver, cfg);
 
 AxisController::ExtPins extPins{
-    /*step*/ PA1, /*dir*/ PA2, /*en*/ PA0, /*enActiveLow*/ true};
+    /*step*/ PA1, /*dir*/ PB5, /*en*/ PA0, /*enActiveLow*/ true};
 
 static float g_dtSec = 0.f;
 static unsigned long g_lastMs = 0;
@@ -339,7 +339,7 @@ static void onExternalMode(const CanCmdBus::CmdFrame &f)
   cfg.externalMode = em;
   axis.setExternalMode(cfg.externalMode);
 
-  if(!cfg.externalMode)
+  if (!cfg.externalMode)
   {
     stepgen.enable();
   }
@@ -542,9 +542,10 @@ void loop()
     stepgen.stop();
   }
 
-  if ((now % 50) == 0) // ~20 Hz gate
-  { 
+  if ((now % 2) == 0) // ~25 Hz gate
+  {
     sendData();
   }
   CanCmdBus::poll();
+  delay(5);
 }

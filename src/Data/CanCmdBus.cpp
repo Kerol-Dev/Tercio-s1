@@ -110,7 +110,8 @@ namespace CanCmdBus
       minL = maxL = 4;
       return true; // SET_SPEED_LIMIT (f32)
     case 0x04:
-      minL = maxL = 12;
+      minL = 12;
+      maxL = 15;
       return true; // SET_PID (3*f32)
     case 0x05:
       minL = maxL = 2;
