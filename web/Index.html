@@ -17,6 +17,7 @@
       --accent-2: #60a5fa;
       --warn: #f59e0b;
       --danger: #ef4444;
+      --purple: #8b5cf6;
       --switch-bg: #1f2937;
       --switch-on: #10b981;
       --switch-knob: #fff;
@@ -62,7 +63,7 @@
       --switch-knob: #fff;
     }
 
-    /* THEME – LIGHT (no dark boxes, proper contrast) */
+    /* THEME – LIGHT */
     :root[data-theme="light"] {
       --bg: #f7f8fc;
       --fg: #0f172a;
@@ -193,6 +194,11 @@
       color: #2b0b0b
     }
 
+    .btn.magic {
+      background: var(--purple);
+      color: #fff;
+    }
+
     .btn[disabled] {
       opacity: .5;
       cursor: not-allowed
@@ -248,7 +254,15 @@
       border-radius: 10px;
       display: flex;
       gap: 10px;
-      align-items: center
+      align-items: center;
+      margin-bottom: 8px;
+    }
+
+    .warnbar.stall {
+      background: #451a1a;
+      border-color: #ef4444;
+      color: #fca5a5;
+      font-weight: bold;
     }
 
     .hidden {
@@ -349,6 +363,10 @@
       outline: 2px solid var(--accent)
     }
 
+    .dev-item.stalled {
+      outline: 2px solid var(--danger)
+    }
+
     .dev-item:focus {
       outline: 2px solid var(--accent-2)
     }
@@ -372,6 +390,12 @@
       border-color: #6b1d1d;
       background: #2a1111;
       color: #ffd2d2
+    }
+
+    .tag.danger {
+      border-color: #ef4444;
+      background: #451a1a;
+      color: #fff;
     }
 
     .section-title {
@@ -501,33 +525,33 @@
     }
 
     /* --- Branding Header --- */
-.brand-header {
-  text-align: center;
-  padding: 16px 0 20px 0;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 20px;
-  background: linear-gradient(180deg, var(--card), var(--card2));
-  border-radius: 0 0 20px 20px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-}
+    .brand-header {
+      text-align: center;
+      padding: 16px 0 20px 0;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 20px;
+      background: linear-gradient(180deg, var(--card), var(--card2));
+      border-radius: 0 0 20px 20px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+    }
 
-.brand-header h1 {
-  margin: 0;
-  font-size: 1.8rem;
-  font-weight: 700;
-  letter-spacing: 0.5px;
-  color: var(--fg);
-}
+    .brand-header h1 {
+      margin: 0;
+      font-size: 1.8rem;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      color: var(--fg);
+    }
 
-/* Bluish-grey color for "Tercio Labs" */
-.brand-header .brand-name {
-  background: linear-gradient(90deg, #60a5fa, #93c5fd);
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
-  font-weight: 700;
-  filter: drop-shadow(0 0 2px rgba(96,165,250,0.3));
-}
+    /* Bluish-grey color for "Tercio Labs" */
+    .brand-header .brand-name {
+      background: linear-gradient(90deg, #60a5fa, #93c5fd);
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+      font-weight: 700;
+      filter: drop-shadow(0 0 2px rgba(96, 165, 250, 0.3));
+    }
   </style>
 </head>
 
@@ -569,6 +593,9 @@
         </div>
       </div>
 
+      <div id="stallWarn" class="warnbar stall hidden">
+        <span>⚠ <b>MOTOR STALLED!</b> Send a new target angle or use Auto-Tune to recover.</span>
+      </div>
       <div id="calibWarn" class="warnbar hidden"><b>⚠ Not calibrated.</b> Run <i>Do Calibrate</i> on this device.</div>
 
       <div class="split" style="margin-top:10px">
@@ -599,7 +626,20 @@
             <button id="btn90" class="btn secondary gated">90°/π/2</button>
             <button id="btn180" class="btn secondary gated">180°/π</button>
           </div>
-          <div class="hint" style="margin-top:6px">Frames: <span class="mono">ID_LO ID_H CMD LEN PAYLOAD…</span></div>
+
+          <div class="section-title" style="margin-top:20px; border-top:1px solid var(--border); padding-top:10px">
+            <h3 style="margin:0;font-size:16px">Auto Tuning</h3>
+            <div class="pill"><small>Finds Max Speed</small></div>
+          </div>
+          <div class="grid">
+            <label>Min Angle (deg)<input type="number" id="inTuneMin" value="-90"></label>
+            <label>Max Angle (deg)<input type="number" id="inTuneMax" value="90"></label>
+          </div>
+          <div class="toolbar" style="margin-top:8px">
+            <button id="btnAutoTune" class="btn magic gated">Start Auto-Tune</button>
+          </div>
+
+          <div class="hint" style="margin-top:10px">Frames: <span class="mono">ID_LO ID_H CMD LEN PAYLOAD…</span></div>
         </div>
 
         <div class="card">
@@ -687,6 +727,8 @@
             <div class="pill"><b>Speed:</b> <span id="tlmSpeed" class="mono">—</span></div>
             <div class="pill"><b>Angle:</b> <span id="tlmAngle" class="mono">—</span></div>
             <div class="pill"><b>Temp:</b> <span id="tlmTemp" class="mono">—</span></div>
+            <div class="pill"><b>Stalled:</b> <span id="tlmStalled" class="mono">—</span></div>
+            <div class="pill"><b>Tune:</b> <span id="tlmTune" class="mono">—</span></div>
             <div class="pill"><b>Min:</b> <span id="tlmMin" class="mono">—</span></div>
             <div class="pill"><b>Max:</b> <span id="tlmMax" class="mono">—</span></div>
             <div class="pill"><b>Cal:</b> <span id="tlmCal" class="mono">—</span></div>
@@ -700,6 +742,8 @@
               <th>Speed</th>
               <th>Angle</th>
               <th>Temp</th>
+              <th>Stalled</th>
+              <th>Tune</th>
               <th>Min</th>
               <th>Max</th>
               <th>Cal</th>
@@ -738,8 +782,11 @@
         SET_MICROSTEPS: 0x06, SET_STEALTHCHOP: 0x07, SET_EXT_MODE: 0x08, SET_UNITS: 0x09, SET_ENC_INVERT: 0x0A,
         SET_ENABLED: 0x0B, SET_STEPS_PER_REV: 0x0C, DO_CALIBRATE: 0x0D, DO_HOMING: 0x0E, SET_ENDSTOP: 0x0F,
         SET_EXT_ENCODER: 0x10, SET_ACCEL_LIMIT: 0x11, SET_DIR_INVERT: 0x12, SET_EXT_SPI: 0x13,
+        DO_AUTO_TUNE: 0x14,
         TELEMETRY: 0x01, GET_CONFIG: 0x20
       };
+
+      const TUNE_STATES = ['Idle', 'Prep', 'Fwd', 'Bwd', 'Inc', 'Done'];
       const TELEMETRY_CAN_ID = 0x000;
       const header = (id, cmd, len) => new Uint8Array([id & 0xFF, (id >> 8) & 0xFF, cmd & 0xFF, len & 0xFF]);
 
@@ -759,6 +806,10 @@
           p[0] = useMINTrigger ? 1 : 0; p.set(f32le(offset), 1); p[5] = activeLow ? 1 : 0; p.set(f32le(speed), 6); p[10] = direction ? 1 : 0;
           const h = header(id, CMD.DO_HOMING, p.length), o = new Uint8Array(h.length + p.length); o.set(h, 0); o.set(p, h.length); return o;
         },
+        autoTune: (id, min, max) => {
+          const p = new Uint8Array(8); p.set(f32le(min), 0); p.set(f32le(max), 4);
+          const h = header(id, CMD.DO_AUTO_TUNE, p.length), o = new Uint8Array(h.length + p.length); o.set(h, 0); o.set(p, h.length); return o;
+        },
         getConfig: (id) => header(id, CMD.GET_CONFIG, 0)
       };
 
@@ -776,18 +827,27 @@
       const statusEl = $('status'), previewEl = $('preview');
       const activeIdEl = $('activeId'), activeUnitsEl = $('activeUnits'), targetUnitsEl = $('targetUnits');
       const inTarget = $('inTarget'), inRps = $('inRps'), inRps2 = $('inRps2'), inmA = $('inmA');
+      const inTuneMin = $('inTuneMin'), inTuneMax = $('inTuneMax');
       const tglEnable = $('tglEnable');
       const newIdEl = $('newId'), msEl = $('ms'), sprEl = $('spr');
       const tglUnitsDeg = $('tglUnitsDeg'), tglStealth = $('tglStealth'), tglExtEnc = $('tglExtEnc'), tglExtMode = $('tglExtMode'), tglEndstop = $('tglEndstop'), tglEncInvert = $('tglEncInvert'), tglDirInvert = $('tglDirInvert'), tglExtSPI = $('tglExtSPI');
       const pidKp = $('pidKp'), pidKi = $('pidKi'), pidKd = $('pidKd');
       const homeOffset = $('homeOffset'), homeSpeed = $('homeSpeed'), homeUseMin = $('homeUseMin'), homeActiveLow = $('homeActiveLow'), homeDirPlus = $('homeDirPlus');
-      const tlmSpeed = $('tlmSpeed'), tlmAngle = $('tlmAngle'), tlmTemp = $('tlmTemp'), tlmMin = $('tlmMin'), tlmMax = $('tlmMax'), tlmCal = $('tlmCal');
+      const tlmSpeed = $('tlmSpeed'), tlmAngle = $('tlmAngle'), tlmTemp = $('tlmTemp'), tlmMin = $('tlmMin'), tlmMax = $('tlmMax'), tlmCal = $('tlmCal'), tlmStalled = $('tlmStalled'), tlmTune = $('tlmTune');
       const tblBodies = $('tblBodies');
       const logEl = $('log');
+      const stallWarn = $('stallWarn'), calibWarn = $('calibWarn');
 
       const setStatus = txt => statusEl.innerHTML = `<small>${txt}</small>`;
-      const logLine = (p, buf, color) => { const time = new Date().toLocaleTimeString(); const text = (buf instanceof Uint8Array) ? bytesHex(buf) : String(buf); const div = document.createElement('div'); div.innerHTML = `<span style="color:#9ca3af">${time}</span> <b style="color:${color}">${p}</b> ${text}`; logEl.appendChild(div); logEl.scrollTop = logEl.scrollHeight; };
-      const logTx = u8arr => logLine('>', u8arr, '#60a5fa'); const logInfo = t => logLine('*', t, '#f59e0b');
+      const logLine = (p, buf, color) => {
+        const time = new Date().toLocaleTimeString();
+        const text = (buf instanceof Uint8Array) ? bytesHex(buf) : String(buf);
+        const div = document.createElement('div');
+        div.innerHTML = `<span style="color:#9ca3af">${time}</span> <b style="color:${color}">${p}</b> ${text}`;
+        logEl.appendChild(div); logEl.scrollTop = logEl.scrollHeight;
+      };
+      const logTx = u8arr => logLine('>', u8arr, '#60a5fa');
+      const logInfo = t => logLine('*', t, '#f59e0b');
 
       // App state
       const store = { devices: new Map(), tiles: new Map(), activeId: null, requestedCfg: new Set(), lastCfgReqId: null };
@@ -809,56 +869,125 @@
         const focus = () => setActive(id);
         root.onclick = focus; root.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); focus(); } };
         devListEl.appendChild(root);
-        const fields = { root, unit: root.querySelector('.unit'), spd: root.querySelector('.spd'), ang: root.querySelector('.ang'), tmp: root.querySelector('.tmp'), cal: root.querySelector('.cal'), ts: root.querySelector('.ts'), idtxt: root.querySelector('.idtxt') };
+        const fields = {
+          root,
+          unit: root.querySelector('.unit'),
+          spd: root.querySelector('.spd'),
+          ang: root.querySelector('.ang'),
+          tmp: root.querySelector('.tmp'),
+          cal: root.querySelector('.cal'),
+          ts: root.querySelector('.ts'),
+          idtxt: root.querySelector('.idtxt')
+        };
         store.tiles.set(id, fields);
         return fields;
       }
+
       function updateTile(id, st) {
         let t = store.tiles.get(id); if (!t) t = makeTile(id, st);
-        if (t.unit) t.unit.textContent = 'units: ' + (st.units === 1 ? 'deg' : 'rad');
-        if (t.spd) t.spd.textContent = 'spd: ' + (st.speed != null ? st.speed.toFixed(2) : '—');
-        if (t.ang) t.ang.textContent = 'ang: ' + (st.angle != null ? st.angle.toFixed(2) : '—');
-        if (t.tmp) t.tmp.textContent = 'T: ' + (st.temp != null ? st.temp.toFixed(1) : '—');
-        if (t.cal) { t.cal.textContent = st.cal ? 'CAL' : 'UNCAL'; t.cal.classList.toggle('warn', !st.cal); }
+        const isImu = st.type === 'imu';
+
+        if (isImu) {
+          if (t.unit) t.unit.textContent = 'IMU';
+          if (t.spd) t.spd.textContent = 'R: ' + (st.roll != null ? st.roll.toFixed(1) : '—');
+          if (t.ang) t.ang.textContent = 'P: ' + (st.pitch != null ? st.pitch.toFixed(1) : '—');
+          if (t.tmp) t.tmp.textContent = 'Y: ' + (st.yaw != null ? st.yaw.toFixed(1) : '—');
+          const tempVal = (st.imuTemp != null ? st.imuTemp : st.temp);
+          if (t.cal) {
+            t.cal.textContent = 'T: ' + (tempVal != null ? tempVal.toFixed(1) : '—');
+            t.cal.classList.remove('warn');
+          }
+        } else {
+          if (t.unit) t.unit.textContent = 'units: ' + (st.units === 1 ? 'deg' : 'rad');
+          if (t.spd) t.spd.textContent = 'spd: ' + (st.speed != null ? st.speed.toFixed(2) : '—');
+          if (t.ang) t.ang.textContent = 'ang: ' + (st.angle != null ? st.angle.toFixed(2) : '—');
+          if (t.tmp) t.tmp.textContent = 'T: ' + (st.temp != null ? st.temp.toFixed(1) : '—');
+          if (t.cal) { t.cal.textContent = st.cal ? 'CAL' : 'UNCAL'; t.cal.classList.toggle('warn', !st.cal); }
+          t.root.classList.toggle('stalled', !!st.stalled);
+        }
+
         if (t.ts) t.ts.textContent = st.ts ? new Date(st.ts).toLocaleTimeString() : '';
         const act = store.activeId === id; t.root.classList.toggle('active', act); t.root.setAttribute('aria-selected', act ? 'true' : 'false');
       }
+
       function filterList() {
         const q = (devSearch.value || '').trim().toLowerCase();
         for (const [id, t] of store.tiles) {
           const st = store.devices.get(id) || {};
-          const txt = ('' + id) + ' ' + (st.cal ? 'calibrated' : 'not');
+          const txt = ('' + id) + ' ' + (st.type || '') + ' ' + (st.cal ? 'calibrated' : 'not') + ' ' + (st.stalled ? 'stalled' : '');
           t.root.style.display = (!q || txt.toLowerCase().includes(q)) ? '' : 'none';
         }
       }
+
       function refreshListDevices() {
         const ids = [...store.devices.keys()].sort((a, b) => a - b);
-        ids.forEach(id => { const st = store.devices.get(id) || {}; if (!store.tiles.has(id)) makeTile(id, st); else updateTile(id, st); });
+        ids.forEach(id => {
+          const st = store.devices.get(id) || {};
+          if (!store.tiles.has(id)) makeTile(id, st); else updateTile(id, st);
+        });
         filterList();
       }
 
       function setActive(id) {
         if (!store.devices.has(id)) return;
         store.activeId = id;
-        for (const [tid, t] of store.tiles) { const act = tid === id; t.root.classList.toggle('active', act); t.root.setAttribute('aria-selected', act ? 'true' : 'false'); }
-        sendBytes(frame.getConfig(id)); store.lastCfgReqId = id;
+        for (const [tid, t] of store.tiles) {
+          const act = tid === id;
+          t.root.classList.toggle('active', act);
+          t.root.setAttribute('aria-selected', act ? 'true' : 'false');
+        }
+        // Only motors have config; IMUs will just ignore this
+        sendBytes(frame.getConfig(id));
+        store.lastCfgReqId = id;
         renderActive(); gate(); preview();
       }
+
       function renderActive() {
         const st = store.devices.get(store.activeId);
         activeIdEl.textContent = (store.activeId == null) ? '—' : (`0x${store.activeId.toString(16).toUpperCase()} (${store.activeId})`);
+
+        if (st && st.type === 'imu') {
+          activeUnitsEl.textContent = 'deg';
+          targetUnitsEl.textContent = 'deg';
+          $('btn90').textContent = '90°';
+          $('btn180').textContent = '180°';
+          tlmSpeed.textContent = '—';
+          tlmAngle.textContent = st.yaw != null ? st.yaw.toFixed(2) : '—';
+          const tempVal = (st.imuTemp != null ? st.imuTemp : st.temp);
+          tlmTemp.textContent = tempVal != null ? tempVal.toFixed(1) : '—';
+          tlmMin.textContent = '—';
+          tlmMax.textContent = '—';
+          tlmCal.textContent = '—';
+          tlmStalled.textContent = '—';
+          tlmTune.textContent = '—';
+          return;
+        }
+
         const units = st ? (st.units || 0) : 0;
         activeUnitsEl.textContent = units === 1 ? 'deg' : 'rad';
         targetUnitsEl.textContent = units === 1 ? 'deg' : 'rad';
         $('btn90').textContent = units === 1 ? '90°' : 'π/2';
         $('btn180').textContent = units === 1 ? '180°' : 'π';
+
         tlmSpeed.textContent = st && st.speed != null ? st.speed.toFixed(4) : '—';
         tlmAngle.textContent = st && st.angle != null ? st.angle.toFixed(4) : '—';
         tlmTemp.textContent = st && st.temp != null ? st.temp.toFixed(1) : '—';
         tlmMin.textContent = st && st.min != null ? (st.min ? 'YES' : 'NO') : '—';
         tlmMax.textContent = st && st.max != null ? (st.max ? 'YES' : 'NO') : '—';
         tlmCal.textContent = st && st.cal ? 'YES' : 'NO';
+
+        // Stalled + Tuning
+        const isStalled = !!(st && st.stalled);
+        tlmStalled.textContent = isStalled ? 'YES' : 'NO';
+        tlmStalled.style.color = isStalled ? '#ef4444' : 'inherit';
+        stallWarn.classList.toggle('hidden', !isStalled);
+
+        const tuneVal = (st && st.tuneState) || 0;
+        const tuneStr = TUNE_STATES[tuneVal] || String(tuneVal);
+        tlmTune.textContent = tuneStr;
+        tlmTune.style.color = (tuneVal !== 0) ? '#60a5fa' : 'inherit';
       }
+
       function renderTable() {
         const ids = [...store.devices.keys()].sort((a, b) => a - b);
         tblBodies.innerHTML = '';
@@ -866,64 +995,144 @@
           const s = store.devices.get(id) || {};
           const tr = document.createElement('tr');
           const td = v => { const el = document.createElement('td'); el.textContent = v; return el; };
+          const tdHTML = h => { const el = document.createElement('td'); el.innerHTML = h; return el; };
           tr.appendChild(td(id));
-          tr.appendChild(td(s.units === 1 ? 'deg' : 'rad'));
-          tr.appendChild(td(s.speed != null ? s.speed.toFixed(3) : '—'));
-          tr.appendChild(td(s.angle != null ? s.angle.toFixed(3) : '—'));
-          tr.appendChild(td(s.temp != null ? s.temp.toFixed(1) : '—'));
-          tr.appendChild(td(s.min != null ? (s.min ? 'YES' : 'NO') : '—'));
-          tr.appendChild(td(s.max != null ? (s.max ? 'YES' : 'NO') : '—'));
-          tr.appendChild(td(s.cal ? 'YES' : 'NO'));
+
+          if (s.type === 'imu') {
+            tr.appendChild(td('deg'));
+            tr.appendChild(td('—'));
+            tr.appendChild(td(s.yaw != null ? s.yaw.toFixed(2) : '—'));
+            const tempVal = (s.imuTemp != null ? s.imuTemp : s.temp);
+            tr.appendChild(td(tempVal != null ? tempVal.toFixed(1) : '—'));
+            tr.appendChild(td('—'));
+            tr.appendChild(td('—'));
+            tr.appendChild(td('—'));
+            tr.appendChild(td('—'));
+            tr.appendChild(td('—'));
+          } else {
+            tr.appendChild(td(s.units === 1 ? 'deg' : 'rad'));
+            tr.appendChild(td(s.speed != null ? s.speed.toFixed(3) : '—'));
+            tr.appendChild(td(s.angle != null ? s.angle.toFixed(3) : '—'));
+            tr.appendChild(td(s.temp != null ? s.temp.toFixed(1) : '—'));
+
+            // Stalled
+            if (s.stalled) tr.appendChild(tdHTML('<b style="color:#ef4444">YES</b>'));
+            else tr.appendChild(td('NO'));
+
+            // Tune
+            const ts = s.tuneState || 0;
+            if (ts !== 0) tr.appendChild(tdHTML(`<b style="color:#60a5fa">${TUNE_STATES[ts] || ts}</b>`));
+            else tr.appendChild(td('Idle'));
+
+            tr.appendChild(td(s.min != null ? (s.min ? 'YES' : 'NO') : '—'));
+            tr.appendChild(td(s.max != null ? (s.max ? 'YES' : 'NO') : '—'));
+            tr.appendChild(td(s.cal ? 'YES' : 'NO'));
+          }
+
           tr.appendChild(td(s.ts ? new Date(s.ts).toLocaleTimeString() : '—'));
           tblBodies.appendChild(tr);
         });
       }
+
       function gate() {
+        const gatedEls = document.querySelectorAll('.gated input, .gated select, .gated button, .gated textarea');
         const st = store.devices.get(store.activeId);
+        if (!st) {
+          gatedEls.forEach(el => { el.disabled = true; });
+          calibWarn.classList.add('hidden');
+          return;
+        }
+        if (st.type === 'imu') {
+          // IMU: disable all motor controls, hide calib warning
+          gatedEls.forEach(el => { el.disabled = true; });
+          calibWarn.classList.add('hidden');
+          return;
+        }
         const ok = !!(st && st.cal);
-        document.querySelectorAll('.gated input, .gated select, .gated button, .gated textarea').forEach(el => { el.disabled = !ok; });
-        $('calibWarn').classList.toggle('hidden', !(store.activeId && !ok));
+        gatedEls.forEach(el => { el.disabled = !ok; });
+        calibWarn.classList.toggle('hidden', !(store.activeId && !ok));
       }
+
       function preview() {
         if (store.activeId == null) { previewEl.textContent = '—'; return; }
         const id = store.activeId, val = parseFloat(inTarget.value) || 0;
         previewEl.textContent = bytesHex(frame.target(id, val));
       }
 
-      // Telemetry parsing (matches firmware packing)
+      // Telemetry parsing (matches firmware packing for MOTORS)
+      // Config(36) + Speed(4) + Angle(4) + Target(4) + Temp(4) + Stalled(1) + Tune(1) + Min(1) + Max(1)
       const AXIS_CFG_SIZE = 36;
       function parseTelemetryPayload(u8arr) {
-        if (u8arr.length < AXIS_CFG_SIZE + 8) return null;
+        if (u8arr.length < AXIS_CFG_SIZE + 20) return null;
         const dv = new DataView(u8arr.buffer, u8arr.byteOffset, u8arr.byteLength);
-        let o = 0; o += 4; o += 2; o += 2; const units = dv.getUint8(o); o += 1;
+        let o = 0; o += 4; o += 2; o += 2;
+        const units = dv.getUint8(o); o += 1;
         const flags = dv.getUint8(o); o += 1;
         o += 2; o += 2; o += 4; o += 4; o += 4; o += 4; o += 4;
         const canArbId = dv.getUint16(o, true); o += 2;
+
+        // Tail
         const speed = dv.getFloat32(o, true); o += 4;
         const angle = dv.getFloat32(o, true); o += 4;
-        let temp = null, min = null, max = null; o += 4;
-        if (u8arr.length >= AXIS_CFG_SIZE + 16) { temp = dv.getFloat32(o, true); o += 4; }
-        if (u8arr.length >= AXIS_CFG_SIZE + 17) { min = dv.getUint8(o) !== 0; o += 1; }
-        if (u8arr.length >= AXIS_CFG_SIZE + 18) { max = dv.getUint8(o) !== 0; }
+        const target = dv.getFloat32(o, true); o += 4; // Added
+        const temp = dv.getFloat32(o, true); o += 4;
+        const stalled = dv.getUint8(o) !== 0; o += 1;   // Added
+        const tuneState = dv.getUint8(o); o += 1;       // Added
+        const min = dv.getUint8(o) !== 0; o += 1;
+        const max = dv.getUint8(o) !== 0; o += 1;
+
         const cal = (flags & 0x40) !== 0;
-        return { id: canArbId, units, speed, angle, temp, min, max, cal, flags };
+        return { id: canArbId, units, speed, angle, target, temp, stalled, tuneState, min, max, cal, flags };
       }
+
+      // IMU telemetry parsing (Option D: structure-based)
+      function parseImuTelemetry(u8arr, headerId) {
+        // Expect at least first 32 bytes: [u32 id][7 floats]
+        if (u8arr.length < 32) return null;
+        const dv = new DataView(u8arr.buffer, u8arr.byteOffset, u8arr.byteLength);
+        const devId32 = dv.getUint32(0, true);
+        const roll = dv.getFloat32(4, true);
+        const pitch = dv.getFloat32(8, true);
+        const yaw = dv.getFloat32(12, true);
+        const ax = dv.getFloat32(16, true);
+        const ay = dv.getFloat32(20, true);
+        const az = dv.getFloat32(24, true);
+        const temp = dv.getFloat32(28, true);
+
+        if (!isFinite(roll) || !isFinite(pitch) || !isFinite(yaw)) return null;
+        const id = (headerId != null) ? headerId : (devId32 & 0x7FF);
+        return { id, devId32, roll, pitch, yaw, ax, ay, az, temp };
+      }
+
       function parseConfigPayload(u8arr) {
-        if (u8arr.length < 2 + 2 + 2 + 1 + 1 + 12) return null;
-        const dv = new DataView(u8arr.buffer, u8arr.byteOffset, u8arr.byteLength); let o = 0;
-        const stepsPerRev = dv.getUint16(o, true); o += 2;
+        // Match Firmware/Python struct (36 bytes)
+        // <I H H B B H H f f f f f H
+        if (u8arr.length < 36) return null;
+        const dv = new DataView(u8arr.buffer, u8arr.byteOffset, u8arr.byteLength);
+        let o = 0;
+        const crc32 = dv.getUint32(o, true); o += 4;
         const microsteps = dv.getUint16(o, true); o += 2;
-        const currentmA = dv.getUint16(o, true); o += 2;
+        const stepsPerRev = dv.getUint16(o, true); o += 2;
         const units = dv.getUint8(o); o += 1;
         const flags = dv.getUint8(o); o += 1;
+        const encZero = dv.getUint16(o, true); o += 2;
+        const currentmA = dv.getUint16(o, true); o += 2;
+        const maxRPS = dv.getFloat32(o, true); o += 4;
+        const maxRPS2 = dv.getFloat32(o, true); o += 4;
         const kp = dv.getFloat32(o, true); o += 4;
         const ki = dv.getFloat32(o, true); o += 4;
         const kd = dv.getFloat32(o, true); o += 4;
-        return { stepsPerRev, microsteps, currentmA, units, flags, kp, ki, kd };
+        const canId = dv.getUint16(o, true); o += 2;
+
+        return {
+          crc32, microsteps, stepsPerRev, units, flags, encZero, currentmA,
+          maxRPS, maxRPS2, kp, ki, kd, canId
+        };
       }
 
       // Flags (bit layout used by FW)
       const FL = { ENCINV: 0x01, DIRINV: 0x02, STEALTH: 0x04, EXTMODE: 0x08, ENDSTOP: 0x10, EXTENC: 0x20, CAL: 0x40 };
+
       function applyFlagsToFormFromByte(flags) {
         tglStealth.checked = !!(flags & FL.STEALTH);
         tglExtEnc.checked = !!(flags & FL.EXTENC);
@@ -935,7 +1144,8 @@
       }
 
       function syncFormFromState(id) {
-        const st = store.devices.get(id); if (!st) return;
+        const st = store.devices.get(id);
+        if (!st || st.type === 'imu') return; // IMU has no motor config to sync
 
         // Units
         const isDeg = (st.units === 1);
@@ -957,6 +1167,11 @@
         if (st.microsteps != null) $('ms').value = String(st.microsteps);
         if (st.stepsPerRev != null) $('spr').value = String(st.stepsPerRev);
         if (st.currentmA != null) $('inmA').value = String(st.currentmA);
+
+        // Populate Speed/Accel Limits (from config)
+        if (st.maxRPS != null) $('inRps').value = st.maxRPS.toFixed(2).replace(/\.0+$/, '').replace(/\.$/, '');
+        if (st.maxRPS2 != null) $('inRps2').value = st.maxRPS2.toFixed(1).replace(/\.0+$/, '').replace(/\.$/, '');
+
         if (st.kp != null) $('pidKp').value = st.kp.toFixed(3).replace(/\.0+$/, '').replace(/\.$/, '');
         if (st.ki != null) $('pidKi').value = st.ki.toFixed(3).replace(/\.0+$/, '').replace(/\.$/, '');
         if (st.kd != null) $('pidKd').value = st.kd.toFixed(3).replace(/\.0+$/, '').replace(/\.$/, '');
@@ -971,7 +1186,6 @@
         if (st.extSpi != null) { const el = $('tglExtSPI'); if (el) { el.indeterminate = false; el.checked = !!st.extSpi; } }
       }
 
-
       // Web Serial (single writer + queued writes)
       let port = null, reader = null, rxBuf = new Uint8Array(0);
       let writer = null, writeQueue = Promise.resolve();
@@ -980,7 +1194,15 @@
         try {
           if (!('serial' in navigator)) { setStatus('Use Chrome/Edge.'); return; }
           if (port) {
-            try { if (writer) { try { await writer.close?.() } catch { } try { writer.releaseLock() } catch { } writer = null; } reader?.releaseLock(); await port.close(); } catch { }
+            try {
+              if (writer) {
+                try { await writer.close?.() } catch { }
+                try { writer.releaseLock() } catch { }
+                writer = null;
+              }
+              reader?.releaseLock();
+              await port.close();
+            } catch { }
             port = null; setStatus('Disconnected'); $('btnConnect').textContent = 'Connect'; logInfo('Disconnected'); return;
           }
           port = await navigator.serial.requestPort();
@@ -989,7 +1211,15 @@
           setStatus('Connected'); $('btnConnect').textContent = 'Disconnect'; logInfo('Connected');
           devSearch.value = ''; filterList();
           reader = port.readable.getReader();
-          (async () => { try { for (; ;) { const { value, done } = await reader.read(); if (done) break; if (value && value.length) appendBuf(value); } } catch { } })();
+          (async () => {
+            try {
+              for (; ;) {
+                const { value, done } = await reader.read();
+                if (done) break;
+                if (value && value.length) appendBuf(value);
+              }
+            } catch { }
+          })();
           navigator.serial.addEventListener('disconnect', e => { if (e.port === port) { $('btnConnect').click(); } });
         } catch (e) { setStatus('Connect failed: ' + (e?.message || e)); }
       };
@@ -998,12 +1228,20 @@
         if (!port || !writer) return;
         writeQueue = writeQueue.then(async () => {
           try { await writer.write(u8arr); logTx(u8arr); }
-          catch (e) { const msg = String(e?.message || e); if (msg.includes('WritableStream is locked')) return; setStatus('Write failed: ' + msg); }
+          catch (e) {
+            const msg = String(e?.message || e);
+            if (msg.includes('WritableStream is locked')) return;
+            setStatus('Write failed: ' + msg);
+          }
         });
         return writeQueue;
       }
 
-      function appendBuf(chunk) { const m = new Uint8Array(rxBuf.length + chunk.length); m.set(rxBuf, 0); m.set(chunk, rxBuf.length); rxBuf = m; processBuf(); }
+      function appendBuf(chunk) {
+        const m = new Uint8Array(rxBuf.length + chunk.length);
+        m.set(rxBuf, 0); m.set(chunk, rxBuf.length); rxBuf = m; processBuf();
+      }
+
       function processBuf() {
         while (rxBuf.length >= 4) {
           const id = rxBuf[0] | (rxBuf[1] << 8), cmd = rxBuf[2], len = rxBuf[3], total = 4 + len;
@@ -1014,17 +1252,72 @@
             const p = parseTelemetryPayload(payload);
             if (p) {
               const prev = store.devices.get(p.id) || {};
-              const st = { ...prev, units: p.units, speed: p.speed, angle: p.angle, temp: p.temp, min: p.min, max: p.max, cal: p.cal, flags: p.flags, ts: Date.now() };
+
+              // Detect Tuning Completion: If state goes to DONE (5) and wasn't before
+              // We trigger a Config Fetch to see new limits
+              if (p.tuneState === 5 && prev.tuneState !== 5) {
+                logInfo(`Auto-Tune complete for ID ${p.id}. Fetching config...`);
+                sendBytes(frame.getConfig(p.id));
+              }
+
+              const st = {
+                ...prev,
+                type: 'motor',
+                units: p.units,
+                speed: p.speed,
+                angle: p.angle,
+                target: p.target,
+                temp: p.temp,
+                stalled: p.stalled,
+                tuneState: p.tuneState,
+                min: p.min,
+                max: p.max,
+                cal: p.cal,
+                flags: p.flags,
+                ts: Date.now()
+              };
               store.devices.set(p.id, st);
               updateTile(p.id, st);
-              // If active and we don't have config yet, mirror telemetry flags to form now
               if (store.activeId === p.id) {
                 syncFormFromState(p.id);
-                renderActive();  // updates Units display & quick buttons text
+                renderActive();
               }
               if (store.activeId === null) setActive(p.id);
               renderActive(); renderTable(); gate();
-              if (!store.requestedCfg.has(p.id)) { store.requestedCfg.add(p.id); sendBytes(frame.getConfig(p.id)); store.lastCfgReqId = p.id; }
+              if (!store.requestedCfg.has(p.id)) {
+                store.requestedCfg.add(p.id);
+                sendBytes(frame.getConfig(p.id));
+                store.lastCfgReqId = p.id;
+              }
+            }
+          } else if (id !== TELEMETRY_CAN_ID && cmd === CMD.TELEMETRY) {
+            // Try IMU decode
+            const imu = parseImuTelemetry(payload, id);
+            if (imu) {
+              const prev = store.devices.get(imu.id) || {};
+              const st = {
+                ...prev,
+                type: 'imu',
+                roll: imu.roll,
+                pitch: imu.pitch,
+                yaw: imu.yaw,
+                ax: imu.ax,
+                ay: imu.ay,
+                az: imu.az,
+                imuTemp: imu.temp,
+                temp: imu.temp, // also keep in common field for table
+                ts: Date.now()
+              };
+              store.devices.set(imu.id, st);
+              updateTile(imu.id, st);
+              // Do NOT auto-send config to IMU; do NOT auto-activate to avoid disturbing motor UX
+              if (store.activeId === null) {
+                // If there is literally no active device at all, we may select this IMU
+                setActive(imu.id);
+              } else {
+                renderActive();
+              }
+              renderTable(); gate();
             }
           } else if (id === TELEMETRY_CAN_ID && cmd === CMD.GET_CONFIG) {
             const cfg = parseConfigPayload(payload);
@@ -1032,15 +1325,30 @@
               const devId = store.lastCfgReqId ?? store.activeId;
               if (devId != null) {
                 const prev = store.devices.get(devId) || {};
-                const st = { ...prev, stepsPerRev: cfg.stepsPerRev, microsteps: cfg.microsteps, currentmA: cfg.currentmA, units: cfg.units, flags: cfg.flags, kp: cfg.kp, ki: cfg.ki, kd: cfg.kd };
+                const st = {
+                  ...prev,
+                  stepsPerRev: cfg.stepsPerRev,
+                  microsteps: cfg.microsteps,
+                  currentmA: cfg.currentmA,
+                  units: cfg.units,
+                  flags: cfg.flags,
+                  maxRPS: cfg.maxRPS,
+                  maxRPS2: cfg.maxRPS2,
+                  kp: cfg.kp,
+                  ki: cfg.ki,
+                  kd: cfg.kd
+                };
                 store.devices.set(devId, st);
                 updateTile(devId, st);
-                if (devId === store.activeId) { syncFormFromState(devId); }
+                if (devId === store.activeId) {
+                  syncFormFromState(devId);
+                }
                 logInfo(`Config applied to ID ${devId}`);
                 renderActive(); gate();
               }
             }
           }
+
           rxBuf = rxBuf.subarray(total);
         }
       }
@@ -1052,67 +1360,239 @@
 
       inTarget.addEventListener('input', preview);
       $('btn0').onclick = () => { inTarget.value = '0'; preview(); };
-      $('btn90').onclick = () => { const st = store.devices.get(store.activeId); const isDeg = st && st.units === 1; inTarget.value = isDeg ? '90' : (Math.PI / 2).toFixed(3); preview(); };
-      $('btn180').onclick = () => { const st = store.devices.get(store.activeId); const isDeg = st && st.units === 1; inTarget.value = isDeg ? '180' : (Math.PI).toFixed(3); preview(); };
+      $('btn90').onclick = () => {
+        const st = store.devices.get(store.activeId);
+        const isDeg = st && st.units === 1;
+        inTarget.value = isDeg ? '90' : (Math.PI / 2).toFixed(3); preview();
+      };
+      $('btn180').onclick = () => {
+        const st = store.devices.get(store.activeId);
+        const isDeg = st && st.units === 1;
+        inTarget.value = isDeg ? '180' : (Math.PI).toFixed(3); preview();
+      };
 
-      $('btnSendTarget').onclick = () => { if (store.activeId == null) return; sendBytes(frame.target(store.activeId, parseFloat(inTarget.value) || 0)); };
-      $('btnSendLimits').onclick = () => { if (store.activeId == null) return; const id = store.activeId; const rps = parseFloat(inRps.value) || 0; const rps2 = parseFloat(inRps2.value) || 0; sendBytes(frame.speed(id, rps)); sendBytes(frame.accel(id, rps2)); };
-      $('btnSetCurrent').onclick = () => { if (store.activeId == null) return; sendBytes(frame.current(store.activeId, parseInt(inmA.value, 10) || 0)); };
-      $('btnCal').onclick = () => { if (store.activeId == null) return; sendBytes(frame.calibrate(store.activeId)); };
-      tglEnable.onchange = () => { if (store.activeId == null) return; sendBytes(frame.bool1(store.activeId, CMD.SET_ENABLED, tglEnable.checked)); };
+      $('btnSendTarget').onclick = () => {
+        if (store.activeId == null) return;
+        const st = store.devices.get(store.activeId);
+        if (st && st.type === 'imu') return; // ignore for IMU
+        sendBytes(frame.target(store.activeId, parseFloat(inTarget.value) || 0));
+      };
+      $('btnSendLimits').onclick = () => {
+        if (store.activeId == null) return;
+        const st = store.devices.get(store.activeId);
+        if (st && st.type === 'imu') return;
+        const id = store.activeId;
+        const rps = parseFloat(inRps.value) || 0;
+        const rps2 = parseFloat(inRps2.value) || 0;
+        sendBytes(frame.speed(id, rps)); sendBytes(frame.accel(id, rps2));
+      };
+      $('btnSetCurrent').onclick = () => {
+        if (store.activeId == null) return;
+        const st = store.devices.get(store.activeId);
+        if (st && st.type === 'imu') return;
+        sendBytes(frame.current(store.activeId, parseInt(inmA.value, 10) || 0));
+      };
+      $('btnCal').onclick = () => {
+        if (store.activeId == null) return;
+        const st = store.devices.get(store.activeId);
+        if (st && st.type === 'imu') return;
+        sendBytes(frame.calibrate(store.activeId));
+      };
+      $('btnAutoTune').onclick = () => {
+        if (store.activeId == null) return;
+        const st = store.devices.get(store.activeId);
+        if (st && st.type === 'imu') return;
+        const min = parseFloat(inTuneMin.value) || 0;
+        const max = parseFloat(inTuneMax.value) || 0;
+        sendBytes(frame.autoTune(store.activeId, min, max));
+        setStatus('Auto-Tune started...');
+      };
+
+      tglEnable.onchange = () => {
+        if (store.activeId == null) return;
+        const st = store.devices.get(store.activeId);
+        if (st && st.type === 'imu') { tglEnable.checked = false; return; }
+        sendBytes(frame.bool1(store.activeId, CMD.SET_ENABLED, tglEnable.checked));
+      };
 
       $('btnApplyID').onclick = () => {
-        if (store.activeId == null) return; const oldId = store.activeId; const nid = clamp11(parseInt(newIdEl.value, 10) || 0); if (nid === oldId) return;
+        if (store.activeId == null) return;
+        const st = store.devices.get(store.activeId);
+        const oldId = store.activeId;
+        const nid = clamp11(parseInt(newIdEl.value, 10) || 0);
+        if (nid === oldId) return;
         sendBytes(frame.setId(oldId, nid));
-        const st = store.devices.get(oldId) || {}; store.devices.delete(oldId); store.devices.set(nid, st);
-        const tile = store.tiles.get(oldId); if (tile) { tile.root.dataset.id = String(nid); tile.idtxt.textContent = '0x' + nid.toString(16).toUpperCase(); store.tiles.delete(oldId); store.tiles.set(nid, tile); }
+        const dev = store.devices.get(oldId) || {};
+        store.devices.delete(oldId);
+        store.devices.set(nid, dev);
+        const tile = store.tiles.get(oldId);
+        if (tile) {
+          tile.root.dataset.id = String(nid);
+          tile.idtxt.textContent = '0x' + nid.toString(16).toUpperCase();
+          store.tiles.delete(oldId);
+          store.tiles.set(nid, tile);
+        }
         setActive(nid);
       };
-      $('btnApplyStepper').onclick = () => { if (store.activeId == null) return; const id = store.activeId; sendBytes(frame.microsteps(id, parseInt(msEl.value, 10) || 16)); sendBytes(frame.stepsPerRev(id, parseInt(sprEl.value, 10) || 200)); };
 
-      tglUnitsDeg.onchange = () => { if (store.activeId == null) return; sendBytes(frame.bool1(store.activeId, CMD.SET_UNITS, tglUnitsDeg.checked)); renderActive(); };
-      tglStealth.onchange = () => { if (store.activeId == null) return; sendBytes(frame.bool1(store.activeId, CMD.SET_STEALTHCHOP, tglStealth.checked)); };
-      tglExtEnc.onchange = () => { if (store.activeId == null) return; sendBytes(frame.bool1(store.activeId, CMD.SET_EXT_ENCODER, tglExtEnc.checked)); };
-      tglExtMode.onchange = () => { if (store.activeId == null) return; sendBytes(frame.bool1(store.activeId, CMD.SET_EXT_MODE, tglExtMode.checked)); };
-      tglEndstop.onchange = () => { if (store.activeId == null) return; sendBytes(frame.bool1(store.activeId, CMD.SET_ENDSTOP, tglEndstop.checked)); };
-      tglEncInvert.onchange = () => { if (store.activeId == null) return; sendBytes(frame.bool1(store.activeId, CMD.SET_ENC_INVERT, tglEncInvert.checked)); };
-      tglDirInvert.onchange = () => { if (store.activeId == null) return; sendBytes(frame.bool1(store.activeId, CMD.SET_DIR_INVERT, tglDirInvert.checked)); };
+      $('btnApplyStepper').onclick = () => {
+        if (store.activeId == null) return;
+        const st = store.devices.get(store.activeId);
+        if (st && st.type === 'imu') return;
+        const id = store.activeId;
+        sendBytes(frame.microsteps(id, parseInt(msEl.value, 10) || 16));
+        sendBytes(frame.stepsPerRev(id, parseInt(sprEl.value, 10) || 200));
+      };
+
+      tglUnitsDeg.onchange = () => {
+        if (store.activeId == null) return;
+        const st = store.devices.get(store.activeId);
+        if (st && st.type === 'imu') { tglUnitsDeg.checked = false; return; }
+        sendBytes(frame.bool1(store.activeId, CMD.SET_UNITS, tglUnitsDeg.checked)); renderActive();
+      };
+      tglStealth.onchange = () => {
+        if (store.activeId == null) return;
+        const st = store.devices.get(store.activeId);
+        if (st && st.type === 'imu') { tglStealth.checked = false; return; }
+        sendBytes(frame.bool1(store.activeId, CMD.SET_STEALTHCHOP, tglStealth.checked));
+      };
+      tglExtEnc.onchange = () => {
+        if (store.activeId == null) return;
+        const st = store.devices.get(store.activeId);
+        if (st && st.type === 'imu') { tglExtEnc.checked = false; return; }
+        sendBytes(frame.bool1(store.activeId, CMD.SET_EXT_ENCODER, tglExtEnc.checked));
+      };
+      tglExtMode.onchange = () => {
+        if (store.activeId == null) return;
+        const st = store.devices.get(store.activeId);
+        if (st && st.type === 'imu') { tglExtMode.checked = false; return; }
+        sendBytes(frame.bool1(store.activeId, CMD.SET_EXT_MODE, tglExtMode.checked));
+      };
+      tglEndstop.onchange = () => {
+        if (store.activeId == null) return;
+        const st = store.devices.get(store.activeId);
+        if (st && st.type === 'imu') { tglEndstop.checked = false; return; }
+        sendBytes(frame.bool1(store.activeId, CMD.SET_ENDSTOP, tglEndstop.checked));
+      };
+      tglEncInvert.onchange = () => {
+        if (store.activeId == null) return;
+        const st = store.devices.get(store.activeId);
+        if (st && st.type === 'imu') { tglEncInvert.checked = false; return; }
+        sendBytes(frame.bool1(store.activeId, CMD.SET_ENC_INVERT, tglEncInvert.checked));
+      };
+      tglDirInvert.onchange = () => {
+        if (store.activeId == null) return;
+        const st = store.devices.get(store.activeId);
+        if (st && st.type === 'imu') { tglDirInvert.checked = false; return; }
+        sendBytes(frame.bool1(store.activeId, CMD.SET_DIR_INVERT, tglDirInvert.checked));
+      };
 
       // NEW: External SPI (write-only; not in telemetry)
       tglExtSPI.onchange = () => {
         if (store.activeId == null) return;
+        const st = store.devices.get(store.activeId);
+        if (st && st.type === 'imu') { tglExtSPI.checked = false; return; }
         const id = store.activeId;
         const checked = tglExtSPI.checked;
         sendBytes(frame.bool1(id, CMD.SET_EXT_SPI, checked));
-        const st = store.devices.get(id) || {};
-        st.extSpi = checked; // remember locally
-        store.devices.set(id, st);
+        const dev = store.devices.get(id) || {};
+        dev.extSpi = checked;
+        store.devices.set(id, dev);
       };
 
-      $('btnApplyPID').onclick = () => { if (store.activeId == null) return; const id = store.activeId; sendBytes(frame.pid(id, parseFloat(pidKp.value) || 0, parseFloat(pidKi.value) || 0, parseFloat(pidKd.value) || 0)); };
+      $('btnApplyPID').onclick = () => {
+        if (store.activeId == null) return;
+        const st = store.devices.get(store.activeId);
+        if (st && st.type === 'imu') return;
+        const id = store.activeId;
+        sendBytes(frame.pid(id, parseFloat(pidKp.value) || 0, parseFloat(pidKi.value) || 0, parseFloat(pidKd.value) || 0));
+      };
 
       $('btnDoHome').onclick = () => {
-        if (store.activeId == null) return; const id = store.activeId;
-        const params = { useMINTrigger: homeUseMin.checked, offset: parseFloat(homeOffset.value) || 0, activeLow: homeActiveLow.checked, speed: parseFloat(homeSpeed.value) || 0, direction: homeDirPlus.checked };
+        if (store.activeId == null) return;
+        const st = store.devices.get(store.activeId);
+        if (st && st.type === 'imu') return;
+        const id = store.activeId;
+        const params = {
+          useMINTrigger: homeUseMin.checked,
+          offset: parseFloat(homeOffset.value) || 0,
+          activeLow: homeActiveLow.checked,
+          speed: parseFloat(homeSpeed.value) || 0,
+          direction: homeDirPlus.checked
+        };
         sendBytes(frame.homing(id, params));
       };
 
       $('btnSequential').onclick = async () => {
-        const ids = [...store.devices.keys()].sort((a, b) => a - b); const start = clamp11(parseInt($('bulkStart').value, 10) || 1);
+        const ids = [...store.devices.keys()].sort((a, b) => a - b);
+        const start = clamp11(parseInt($('bulkStart').value, 10) || 1);
         for (let i = 0; i < ids.length; i++) {
-          const cur = ids[i], target = clamp11(start + i); if (cur === target) continue;
+          const cur = ids[i], target = clamp11(start + i);
+          const dev = store.devices.get(cur);
+          if (!dev || dev.type === 'imu') continue; // don't renumber IMUs via bulk
+          if (cur === target) continue;
           await sendBytes(frame.setId(cur, target));
-          const st = store.devices.get(cur) || {}; store.devices.delete(cur); store.devices.set(target, st);
-          const tile = store.tiles.get(cur); if (tile) { tile.root.dataset.id = String(target); tile.idtxt.textContent = '0x' + target.toString(16).toUpperCase(); store.tiles.delete(cur); store.tiles.set(target, tile); }
+          const st = store.devices.get(cur) || {};
+          store.devices.delete(cur);
+          store.devices.set(target, st);
+          const tile = store.tiles.get(cur);
+          if (tile) {
+            tile.root.dataset.id = String(target);
+            tile.idtxt.textContent = '0x' + target.toString(16).toUpperCase();
+            store.tiles.delete(cur);
+            store.tiles.set(target, tile);
+          }
         }
         refreshListDevices(); setStatus('Sequential IDs applied');
       };
 
       $('btnClear').onclick = () => { logEl.textContent = ''; };
-      $('btnSave').onclick = () => { const lines = Array.from(logEl.children).map(el => el.textContent || ''); const blob = new Blob([lines.join('\n')], { type: 'text/plain' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'can_log.txt'; a.click(); URL.revokeObjectURL(url); };
+      $('btnSave').onclick = () => {
+        const lines = Array.from(logEl.children).map(el => el.textContent || '');
+        const blob = new Blob([lines.join('\n')], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob); const a = document.createElement('a');
+        a.href = url; a.download = 'can_log.txt'; a.click(); URL.revokeObjectURL(url);
+      };
       $('btnExport').onclick = () => {
-        const rows = [['id', 'units', 'speed', 'angle', 'temp', 'min', 'max', 'cal', 'last_seen']];[...store.devices.keys()].sort((a, b) => a - b).forEach(id => { const s = store.devices.get(id) || {}; rows.push([id, s.units === 1 ? 'deg' : 'rad', s.speed ?? '', s.angle ?? '', s.temp ?? '', s.min ?? '', s.max ?? '', s.cal ? '1' : '0', s.ts ? new Date(s.ts).toISOString() : '']); });
-        const csv = rows.map(r => r.map(x => String(x)).join(',')).join('\n'); const blob = new Blob([csv], { type: 'text/csv' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'devices.csv'; a.click(); URL.revokeObjectURL(url);
+        const rows = [['id', 'type', 'units', 'speed', 'angle_or_yaw', 'temp', 'min', 'max', 'stalled', 'cal', 'last_seen']];
+        [...store.devices.keys()].sort((a, b) => a - b).forEach(id => {
+          const s = store.devices.get(id) || {};
+          const type = s.type || '';
+          if (s.type === 'imu') {
+            const tempVal = (s.imuTemp != null ? s.imuTemp : s.temp);
+            rows.push([
+              id,
+              type,
+              'deg',
+              '',
+              s.yaw ?? '',
+              tempVal ?? '',
+              '',
+              '',
+              '',
+              '',
+              s.ts ? new Date(s.ts).toISOString() : ''
+            ]);
+          } else {
+            rows.push([
+              id,
+              type,
+              s.units === 1 ? 'deg' : 'rad',
+              s.speed ?? '',
+              s.angle ?? '',
+              s.temp ?? '',
+              s.min ?? '',
+              s.max ?? '',
+              s.stalled ? 'YES' : 'NO',
+              s.cal ? '1' : '0',
+              s.ts ? new Date(s.ts).toISOString() : ''
+            ]);
+          }
+        });
+        const csv = rows.map(r => r.map(x => String(x)).join(',')).join('\n');
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = URL.createObjectURL(blob); const a = document.createElement('a');
+        a.href = url; a.download = 'devices.csv'; a.click(); URL.revokeObjectURL(url);
       };
 
       // Initial paint

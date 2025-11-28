@@ -1,4 +1,3 @@
-# TercioStepperLib.py
 from __future__ import annotations
 import struct, threading, time
 from dataclasses import dataclass, field
@@ -7,7 +6,7 @@ from typing import Optional, Dict
 import serial
 from serial.tools import list_ports
 
-# ========= Protocol (MATCHES HTML UI) =========
+# ========= Protocol (MATCHES HTML UI AND FIRMWARE) =========
 # TX/RX frame: [ID_LO, ID_HI, CMD, LEN, PAYLOAD...]
 HDR_FMT = "<HBB"  # id:uint16, cmd:uint8, len:uint8
 HDR_SIZE = struct.calcsize(HDR_FMT)
@@ -37,13 +36,27 @@ class Cmd(IntEnum):
     SET_ACCEL_LIMIT = 0x11
     SET_DIR_INVERT = 0x12
     SET_EXT_SPI = 0x13
+    DO_AUTO_TUNE = 0x14  # New Auto Tune Command
     GET_CONFIG = 0x20
 
 
-# ========= Wire formats used in telemetry (same as your FW/HTML) =========
+class TuningState(IntEnum):
+    IDLE = 0
+    PREP = 1
+    FWD = 2
+    BWD = 3
+    INCREASE = 4
+    DONE = 5
+
+
+# ========= Wire formats used in telemetry (same as your FW) =========
 AXIS_CONFIG_FMT = "<I H H B B H H f f f f f H"
 AXIS_CONFIG_SIZE = struct.calcsize(AXIS_CONFIG_FMT)
-TELEM_TAIL_FMT = "<f f f f B B"
+
+# Updated Telemetry Tail:
+# float speed, float angle, float target, float temp,
+# bool stalled, uint8 tuneState, bool minTrig, bool maxTrig
+TELEM_TAIL_FMT = "<f f f f B B B B"
 TELEM_TAIL_SIZE = struct.calcsize(TELEM_TAIL_FMT)
 
 
@@ -82,6 +95,8 @@ class AxisState:
     currentAngle: float
     targetAngle: float
     temperature: float
+    stalled: bool  # New
+    tuneState: TuningState  # New
     minTriggered: bool
     maxTriggered: bool
     timestamp: float = field(default_factory=time.time)
@@ -169,11 +184,28 @@ def _parse_axis_config(b: bytes) -> AxisConfig:
 def _parse_telemetry(payload: bytes) -> Optional[AxisState]:
     if len(payload) < AXIS_CONFIG_SIZE + TELEM_TAIL_SIZE:
         return None
+
     cfg = _parse_axis_config(payload[:AXIS_CONFIG_SIZE])
-    (curSpd, curAng, tgtAng, temp, minT, maxT) = struct.unpack(
-        TELEM_TAIL_FMT, payload[AXIS_CONFIG_SIZE : AXIS_CONFIG_SIZE + TELEM_TAIL_SIZE]
+
+    # Unpack updated tail (8 items)
+    (curSpd, curAng, tgtAng, temp, stalled_u8, tuneState_u8, minT_u8, maxT_u8) = (
+        struct.unpack(
+            TELEM_TAIL_FMT,
+            payload[AXIS_CONFIG_SIZE : AXIS_CONFIG_SIZE + TELEM_TAIL_SIZE],
+        )
     )
-    return AxisState(cfg, curSpd, curAng, tgtAng, temp, bool(minT), bool(maxT))
+
+    return AxisState(
+        config=cfg,
+        currentSpeed=curSpd,
+        currentAngle=curAng,
+        targetAngle=tgtAng,
+        temperature=temp,
+        stalled=bool(stalled_u8),
+        tuneState=TuningState(tuneState_u8) if tuneState_u8 <= 5 else TuningState.IDLE,
+        minTriggered=bool(minT_u8),
+        maxTriggered=bool(maxT_u8),
+    )
 
 
 # ========= Bridge =========
@@ -224,7 +256,7 @@ class Bridge:
         self._ser.write(frame)
         self._ser.flush()
 
-    # ---- reader (same logic as HTML: accumulate -> peel frames)
+    # ---- reader
     def _reader_loop(self):
         ser = self._ser
         if not ser:
@@ -237,11 +269,9 @@ class Bridge:
                 self._rx_buf.extend(chunk)
                 self._process_buf()
         except Exception:
-            # swallow and exit thread
             return
 
     def _process_buf(self):
-        # parse as many complete frames as present
         while True:
             if len(self._rx_buf) < HDR_SIZE:
                 return
@@ -259,9 +289,6 @@ class Bridge:
                     with self._lock:
                         self._state[pkt.config.canArbId] = pkt
             elif can_id == TELEMETRY_CAN_ID and cmd == GET_CONFIG_CMD:
-                # optional: you can parse GET_CONFIG reply if you send GET_CONFIG
-                # We'll reuse telemetry parser if your FW sends same payload
-                # But the HTML already uses this for form sync, so keep it:
                 if len(payload) >= AXIS_CONFIG_SIZE:
                     cfg = _parse_axis_config(payload[:AXIS_CONFIG_SIZE])
                     with self._lock:
@@ -276,6 +303,8 @@ class Bridge:
                                 currentAngle=0.0,
                                 targetAngle=0.0,
                                 temperature=0.0,
+                                stalled=False,
+                                tuneState=TuningState.IDLE,
                                 minTriggered=False,
                                 maxTriggered=False,
                             )
@@ -286,7 +315,6 @@ class Bridge:
             return self._state.get(can_id)
 
     def request_config(self, can_id: int):
-        # exactly like HTML: id=target, cmd=GET_CONFIG, len=0
         self.send(can_id, Cmd.GET_CONFIG, b"")
 
     # ---- high-level command wrappers (id must be provided)
@@ -346,6 +374,11 @@ class Bridge:
 
     def do_homing(self, can_id: int, p: HomingParams):
         self.send(can_id, Cmd.DO_HOMING, _pack_homing(p))
+
+    def do_auto_tune(self, can_id: int, min_angle: float, max_angle: float):
+        # Sends two floats: min, max (degrees usually, handled by firmware units logic)
+        payload = struct.pack("<ff", float(min_angle), float(max_angle))
+        self.send(can_id, Cmd.DO_AUTO_TUNE, payload)
 
 
 # ========= Friendly Stepper wrapper (pins id) =========
@@ -414,6 +447,14 @@ class Stepper:
 
     def do_homing(self, p: HomingParams):
         self.bridge.do_homing(self.id, p)
+
+    def do_auto_tune(self, min_angle: float, max_angle: float):
+        """
+        Starts the auto-tuning process.
+        :param min_angle: Minimum angle for the tuning sweep.
+        :param max_angle: Maximum angle for the tuning sweep.
+        """
+        self.bridge.do_auto_tune(self.id, min_angle, max_angle)
 
     def get_axis_state(self) -> Optional[AxisState]:
         return self.bridge.get_state(self.id)

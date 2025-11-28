@@ -140,6 +140,9 @@ namespace CanCmdBus
     case 0x13:
       minL = maxL = 1;
       return true; // SET_EXT_SPI (u8)
+    case 0x14:
+      minL = maxL = 8;
+      return true; // DO_AUTO_TUNE (2 * f32)
     case 0x0A:
       minL = maxL = 1;
       return true; // SET_ENC_INVERT (u8)
