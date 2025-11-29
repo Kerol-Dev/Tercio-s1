@@ -109,9 +109,9 @@ float tuneCurrentRPS = 0;
 float tuneCurrentRPS2 = 0;
 
 const float TUNE_START_RPS = 5.0f;
-const float TUNE_START_RPS2 = 40.0f;
+const float TUNE_START_RPS2 = 30.0f;
 const float TUNE_INC_RPS = 3.0f;
-const float TUNE_INC_RPS2 = 12.0f;
+const float TUNE_INC_RPS2 = 8.0f;
 
 // -----------------------------------------------------------------------------
 // Homing wire payload <B f B f B> (bools as u8; offset/speed as float32)
