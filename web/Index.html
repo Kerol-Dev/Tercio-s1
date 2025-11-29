@@ -3,7 +3,7 @@
 
 <head>
   <meta charset="utf-8" />
-  <title>Tercio Labs – Multi-Motor CAN Control</title>
+  <title>Tercio Labs – Multi-Motor & IMU Control</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <style>
     :root {
@@ -45,19 +45,14 @@
       --accent-2: #60a5fa;
       --warn: #f59e0b;
       --danger: #ef4444;
-
       --field-bg: #1b1f2a;
       --field-border: #2e3347;
-
       --btn-secondary-bg: #1f2937;
       --btn-secondary-fg: #e5e7eb;
-
       --row-bg: #0e111a;
       --log-bg: #000;
-
       --badge-bg: rgba(255, 255, 255, 0.06);
       --badge-fg: #e5e7eb;
-
       --switch-bg: #1f2937;
       --switch-on: #10b981;
       --switch-knob: #fff;
@@ -75,19 +70,14 @@
       --accent-2: #2563eb;
       --warn: #d97706;
       --danger: #dc2626;
-
       --field-bg: #f3f6fb;
       --field-border: #d7deea;
-
       --btn-secondary-bg: #eef2f7;
       --btn-secondary-fg: #0f172a;
-
       --row-bg: #ffffff;
       --log-bg: #111;
-
       --badge-bg: rgba(15, 23, 42, 0.06);
       --badge-fg: #0f172a;
-
       --switch-bg: #e5e7eb;
       --switch-on: #059669;
       --switch-knob: #fff;
@@ -157,11 +147,6 @@
       gap: 12px;
       align-items: center;
       flex-wrap: wrap
-    }
-
-    .theme-label {
-      margin-left: 12px;
-      color: var(--muted)
     }
 
     .btn {
@@ -266,7 +251,7 @@
     }
 
     .hidden {
-      display: none
+      display: none !important;
     }
 
 
@@ -295,7 +280,6 @@
       line-height: 1.2;
     }
 
-    /* Right-side controls sit on one line */
     .dev-header2 .controls {
       display: flex;
       flex-direction: column;
@@ -303,25 +287,11 @@
       gap: 8px;
     }
 
-    /* Compact theme label + select */
-    .theme-row {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .theme-row>span {
-      color: var(--muted);
-      font-weight: 600;
-    }
-
-    /* Make the select height match the button better */
     .dev-header2 .controls select {
       padding: 8px 12px;
       border-radius: 10px;
     }
 
-    /* Mobile fallback: stack nicely */
     @media (max-width:700px) {
       .dev-header2 {
         flex-direction: column;
@@ -390,12 +360,6 @@
       border-color: #6b1d1d;
       background: #2a1111;
       color: #ffd2d2
-    }
-
-    .tag.danger {
-      border-color: #ef4444;
-      background: #451a1a;
-      color: #fff;
     }
 
     .section-title {
@@ -506,7 +470,6 @@
       border-bottom-right-radius: 10px
     }
 
-    /* Label spacing & inline "(rad)" fix */
     label:not(.toggle) {
       display: block !important;
       margin: 0 0 16px !important
@@ -524,7 +487,6 @@
       display: inline
     }
 
-    /* --- Branding Header --- */
     .brand-header {
       text-align: center;
       padding: 16px 0 20px 0;
@@ -543,7 +505,6 @@
       color: var(--fg);
     }
 
-    /* Bluish-grey color for "Tercio Labs" */
     .brand-header .brand-name {
       background: linear-gradient(90deg, #60a5fa, #93c5fd);
       -webkit-background-clip: text;
@@ -552,6 +513,120 @@
       font-weight: 700;
       filter: drop-shadow(0 0 2px rgba(96, 165, 250, 0.3));
     }
+
+    /* --- IMU 3D Visualization --- */
+    .imu-scene {
+      width: 200px;
+      height: 160px;
+      perspective: 800px;
+      margin: 20px auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+    }
+
+    .cube {
+      width: 0; 
+      height: 0;
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform-style: preserve-3d;
+    }
+
+    .cube-face {
+      position: absolute;
+      box-sizing: border-box;
+      background: #1f2937;
+      border: 1px solid #4b5563;
+      backface-visibility: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #9ca3af;
+      font-size: 10px;
+      box-shadow: inset 0 0 10px rgba(0,0,0,0.5);
+    }
+
+    /* Top & Bottom: 120x120 */
+    .face-top, .face-bottom {
+      width: 120px;
+      height: 120px;
+      margin: -60px 0 0 -60px; /* Center it */
+    }
+
+    /* Sides: 120x20 */
+    .face-front, .face-back, .face-left, .face-right {
+      width: 120px;
+      height: 20px;
+      margin: -10px 0 0 -60px; /* Center it */
+    }
+
+    /* TRANSFORMS */
+    .face-top    { transform: rotateX(90deg) translateZ(10px); background: #111827; border: 1px solid var(--accent); }
+    .face-bottom { transform: rotateX(-90deg) translateZ(10px); background: #000; }
+    
+    .face-front  { transform: translateZ(60px); background: #374151; }
+    .face-back   { transform: rotateY(180deg) translateZ(60px); background: #374151; }
+    
+    .face-right  { transform: rotateY(90deg) translateZ(60px); background: #374151; }
+    .face-left   { transform: rotateY(-90deg) translateZ(60px); background: #374151; }
+
+    /* Visual Arrow on Top */
+    .face-top::after {
+        content: "▲";
+        font-size: 40px;
+        color: var(--accent);
+        opacity: 0.8;
+    }
+
+    /* --- AXIS GIZMO --- */
+    .axis {
+      position: absolute;
+      top: 0; left: 0;
+      transform-origin: 0 0;
+      pointer-events: none;
+    }
+    /* X Axis - Red - Right */
+    .axis-x {
+      width: 150px; height: 2px;
+      background: #ef4444;
+      transform: rotateY(0deg); /* Points Right */
+    }
+    .axis-x::after { content: "X"; color: #ef4444; position: absolute; right: -15px; top: -7px; font-weight: bold; font-size:12px; }
+
+    /* Y Axis - Green - Forward (into screen normally, but 3D space) */
+    .axis-y {
+      width: 150px; height: 2px;
+      background: #10b981;
+      transform: rotateY(-90deg); /* Points Forward/Back */
+    }
+    .axis-y::after { content: "Y"; color: #10b981; position: absolute; right: -15px; top: -7px; font-weight: bold; font-size:12px; }
+
+    /* Z Axis - Blue - Up */
+    .axis-z {
+      width: 100px; height: 2px;
+      background: #3b82f6;
+      transform: rotateZ(-90deg); /* Points Up */
+    }
+    .axis-z::after { content: "Z"; color: #3b82f6; position: absolute; right: -15px; top: -7px; font-weight: bold; font-size:12px; }
+
+    .imu-stat-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 10px;
+        text-align: center;
+        margin-top: 20px;
+    }
+    .imu-stat-box {
+        background: var(--badge-bg);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 8px;
+    }
+    .imu-stat-box div:first-child { color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+    .imu-stat-box div:last-child { font-family: monospace; font-weight: bold; font-size: 14px; }
   </style>
 </head>
 
@@ -576,9 +651,10 @@
         </div>
       </div>
 
-      <div class="search"> <input id="devSearch" placeholder="Filter by ID/status…" class="mono" style="flex:1"> <button
-          id="btnRefreshDevices" class="btn secondary">Refresh Devices</button> <button id="btnExport"
-          class="btn secondary">Export CSV</button> </div>
+      <div class="search"> <input id="devSearch" placeholder="Filter by ID/status…" class="mono" style="flex:1">
+        <button id="btnRefreshDevices" class="btn secondary">Refresh Devices</button> <button id="btnExport"
+          class="btn secondary">Export CSV</button>
+      </div>
       <div id="devList" class="dev-list" style="margin-top:10px"></div>
     </div>
     <div class="card">
@@ -589,77 +665,112 @@
         </div>
         <div class="row">
           <div class="pill"><b>Active:</b> <span id="activeId" class="mono">—</span></div>
-          <div class="pill"><b>Units:</b> <span id="activeUnits" class="mono">rad</span></div>
+          <div id="imuTag" class="pill hidden" style="background: var(--purple); color: #fff;">IMU</div>
+          <div id="motorUnitsTag" class="pill"><b>Units:</b> <span id="activeUnits" class="mono">rad</span></div>
         </div>
       </div>
 
       <div id="stallWarn" class="warnbar stall hidden">
         <span>⚠ <b>MOTOR STALLED!</b> Send a new target angle or use Auto-Tune to recover.</span>
       </div>
-      <div id="calibWarn" class="warnbar hidden"><b>⚠ Not calibrated.</b> Run <i>Do Calibrate</i> on this device.</div>
+      <div id="calibWarn" class="warnbar hidden"><b>⚠ Not calibrated.</b> Run <i>Do Calibrate</i> on this device.
+      </div>
 
       <div class="split" style="margin-top:10px">
+        
         <div class="card">
-          <div class="section-title">
-            <h3 style="margin:0;font-size:16px">Quick Target</h3>
-            <div class="pill"><b>Preview:</b> <span id="preview" class="mono">—</span></div>
-          </div>
-          <div class="grid">
-            <label>
-              <span class="label-inline">Target (<span id="targetUnits">rad</span>)</span>
-              <input type="number" id="inTarget" step="0.001" value="0.50">
-            </label>
-            <label>Speed limit (rps)<input type="number" id="inRps" step="0.01" value="25.0"></label>
-            <label>Accel limit (rps²)<input type="number" id="inRps2" step="0.1" value="150.0"></label>
-            <label>Current (mA)<input type="number" id="inmA" step="1" value="1200"></label>
-          </div>
-          <div class="toolbar" style="margin-top:8px">
-            <button id="btnSendTarget" class="btn info gated">Send Target</button>
-            <button id="btnSendLimits" class="btn secondary gated">Send Limits</button>
-            <button id="btnSetCurrent" class="btn secondary gated">Set Current</button>
-            <button id="btnCal" class="btn warn gated">Do Calibrate</button>
-            <label class="toggle gated"><input id="tglEnable" type="checkbox"><span class="switch"><span
-                  class="knob"></span></span><span>Enable Motor</span></label>
-          </div>
-          <div class="toolbar" style="margin-top:8px">
-            <button id="btn0" class="btn secondary gated">0</button>
-            <button id="btn90" class="btn secondary gated">90°/π/2</button>
-            <button id="btn180" class="btn secondary gated">180°/π</button>
-          </div>
-
-          <div class="section-title" style="margin-top:20px; border-top:1px solid var(--border); padding-top:10px">
-            <h3 style="margin:0;font-size:16px">Auto Tuning</h3>
-            <div class="pill"><small>Finds Max Speed</small></div>
-          </div>
-          <div class="grid">
-            <label>Min Angle (deg)<input type="number" id="inTuneMin" value="-90"></label>
-            <label>Max Angle (deg)<input type="number" id="inTuneMax" value="90"></label>
-          </div>
-          <div class="toolbar" style="margin-top:8px">
-            <button id="btnAutoTune" class="btn magic gated">Start Auto-Tune</button>
+          
+          <div id="imuControls" class="hidden">
+             <div class="section-title">
+                 <h3 style="margin:0;font-size:16px">IMU Orientation</h3>
+                 <button id="btnImuZero" class="btn info" style="padding: 4px 8px; font-size:12px;">Zero Orientation</button>
+             </div>
+                          <div class="imu-scene">
+                <div class="cube" id="imuCube">
+                   <div class="cube-face face-front"></div>
+                   <div class="cube-face face-back"></div>
+                   <div class="cube-face face-right"></div>
+                   <div class="cube-face face-left"></div>
+                   <div class="cube-face face-top"></div> <div class="cube-face face-bottom"></div>
+                   <div class="axis axis-x"></div>
+                   <div class="axis axis-y"></div>
+                   <div class="axis axis-z"></div>
+                </div>
+             </div>
+             <div class="imu-stat-grid">
+                <div class="imu-stat-box"><div>Roll</div><div id="valRoll">0.00</div></div>
+                <div class="imu-stat-box"><div>Pitch</div><div id="valPitch">0.00</div></div>
+                <div class="imu-stat-box"><div>Yaw</div><div id="valYaw">0.00</div></div>
+                <div class="imu-stat-box"><div>Acc X</div><div id="valAx">0.00</div></div>
+                <div class="imu-stat-box"><div>Acc Y</div><div id="valAy">0.00</div></div>
+                <div class="imu-stat-box"><div>Acc Z</div><div id="valAz">0.00</div></div>
+             </div>
           </div>
 
-          <div class="hint" style="margin-top:10px">Frames: <span class="mono">ID_LO ID_H CMD LEN PAYLOAD…</span></div>
+          <div id="motorControls">
+              <div class="section-title">
+                <h3 style="margin:0;font-size:16px">Quick Target</h3>
+                <div class="pill"><b>Preview:</b> <span id="preview" class="mono">—</span></div>
+              </div>
+              <div class="grid">
+                <label>
+                  <span class="label-inline">Target (<span id="targetUnits">rad</span>)</span>
+                  <input type="number" id="inTarget" step="0.001" value="0.50">
+                </label>
+                <label>Speed limit (rps)<input type="number" id="inRps" step="0.01" value="25.0"></label>
+                <label>Accel limit (rps²)<input type="number" id="inRps2" step="0.1" value="150.0"></label>
+                <label>Current (mA)<input type="number" id="inmA" step="1" value="1200"></label>
+              </div>
+              <div class="toolbar" style="margin-top:8px">
+                <button id="btnSendTarget" class="btn info gated">Send Target</button>
+                <button id="btnSendLimits" class="btn secondary gated">Send Limits</button>
+                <button id="btnSetCurrent" class="btn secondary gated">Set Current</button>
+                <button id="btnCal" class="btn warn gated">Do Calibrate</button>
+                <label class="toggle gated"><input id="tglEnable" type="checkbox"><span class="switch"><span
+                      class="knob"></span></span><span>Enable Motor</span></label>
+              </div>
+              <div class="toolbar" style="margin-top:8px">
+                <button id="btn0" class="btn secondary gated">0</button>
+                <button id="btn90" class="btn secondary gated">90°/π/2</button>
+                <button id="btn180" class="btn secondary gated">180°/π</button>
+              </div>
+    
+              <div class="section-title"
+                style="margin-top:20px; border-top:1px solid var(--border); padding-top:10px">
+                <h3 style="margin:0;font-size:16px">Auto Tuning</h3>
+                <div class="pill"><small>Finds Max Speed</small></div>
+              </div>
+              <div class="grid">
+                <label>Min Angle (deg)<input type="number" id="inTuneMin" value="-90"></label>
+                <label>Max Angle (deg)<input type="number" id="inTuneMax" value="90"></label>
+              </div>
+              <div class="toolbar" style="margin-top:8px">
+                <button id="btnAutoTune" class="btn magic gated">Start Auto-Tune</button>
+              </div>
+              
+              <div class="hint" style="margin-top:10px">Frames: <span class="mono">ID_LO ID_H CMD LEN
+                  PAYLOAD…</span></div>
+          </div>
         </div>
 
         <div class="card">
-          <div class="section-title">
+            <div class="section-title">
             <h3 style="margin:0;font-size:16px">Device Setup</h3>
           </div>
           <div class="grid">
             <label>Change ID<input id="newId" type="number" min="0" max="2047" value="2"></label>
-            <label>Microsteps<input id="ms" type="number" min="1" value="16"></label>
-            <label>Steps/Rev<input id="spr" type="number" min="1" value="200"></label>
+            <div class="motor-specific"><label>Microsteps<input id="ms" type="number" min="1" value="16"></label></div>
+            <div class="motor-specific"><label>Steps/Rev<input id="spr" type="number" min="1" value="200"></label></div>
           </div>
           <div class="toolbar" style="margin-top:8px">
             <button id="btnApplyID" class="btn danger gated">Set ID</button>
-            <button id="btnApplyStepper" class="btn secondary gated">Apply Stepper Params</button>
+            <button id="btnApplyStepper" class="btn secondary gated motor-specific">Apply Stepper Params</button>
           </div>
 
-          <div class="section-title" style="margin-top:12px">
+          <div class="section-title motor-specific" style="margin-top:12px">
             <h3 style="margin:0;font-size:16px">Modes & Flags</h3>
           </div>
-          <div class="toolbar" style="flex-wrap:wrap">
+          <div class="toolbar motor-specific" style="flex-wrap:wrap">
             <label class="toggle gated"><input id="tglUnitsDeg" type="checkbox"><span class="switch"><span
                   class="knob"></span></span><span>Use Degrees</span></label>
             <label class="toggle gated"><input id="tglStealth" type="checkbox"><span class="switch"><span
@@ -674,31 +785,30 @@
                   class="knob"></span></span><span>Encoder Invert</span></label>
             <label class="toggle gated"><input id="tglDirInvert" type="checkbox"><span class="switch"><span
                   class="knob"></span></span><span>Direction Invert</span></label>
-            <!-- NEW: External SPI (write-only) -->
             <label class="toggle gated"><input id="tglExtSPI" type="checkbox"><span class="switch"><span
                   class="knob"></span></span><span>External SPI</span></label>
           </div>
 
-          <div class="section-title" style="margin-top:12px">
+          <div class="section-title motor-specific" style="margin-top:12px">
             <h3 style="margin:0;font-size:16px">PID</h3>
           </div>
-          <div class="grid">
+          <div class="grid motor-specific">
             <label>Kp<input id="pidKp" type="number" step="0.001" value="3.0"></label>
             <label>Ki<input id="pidKi" type="number" step="0.001" value="0.0"></label>
             <label>Kd<input id="pidKd" type="number" step="0.001" value="0.0"></label>
           </div>
-          <div class="toolbar" style="margin-top:8px">
+          <div class="toolbar motor-specific" style="margin-top:8px">
             <button id="btnApplyPID" class="btn secondary gated">Apply PID</button>
           </div>
 
-          <div class="section-title" style="margin-top:12px">
+          <div class="section-title motor-specific" style="margin-top:12px">
             <h3 style="margin:0;font-size:16px">Homing</h3>
           </div>
-          <div class="grid">
+          <div class="grid motor-specific">
             <label>Offset<input id="homeOffset" type="number" step="0.001" value="0.0"></label>
             <label>Speed (rps)<input id="homeSpeed" type="number" step="0.01" value="15.0"></label>
           </div>
-          <div class="toolbar" style="flex-wrap:wrap">
+          <div class="toolbar motor-specific" style="flex-wrap:wrap">
             <label class="toggle gated"><input id="homeUseMin" type="checkbox" checked><span class="switch"><span
                   class="knob"></span></span><span>Use MIN trigger</span></label>
             <label class="toggle gated"><input id="homeActiveLow" type="checkbox" checked><span class="switch"><span
@@ -739,9 +849,9 @@
             <tr>
               <th>ID</th>
               <th>Units</th>
-              <th>Speed</th>
-              <th>Angle</th>
-              <th>Temp</th>
+              <th>Speed (Roll)</th>
+              <th>Angle (Pitch)</th>
+              <th>Temp (Yaw)</th>
               <th>Stalled</th>
               <th>Tune</th>
               <th>Min</th>
@@ -766,6 +876,7 @@
       </div>
     </div>
   </div>
+
   <script>
     (() => {
       const $ = id => document.getElementById(id);
@@ -776,18 +887,18 @@
       const u16le = v => new Uint8Array([v & 0xFF, (v >> 8) & 0xFF]);
       const f32le = f => { const b = new ArrayBuffer(4); new DataView(b).setFloat32(0, Number(f) || 0, true); return new Uint8Array(b); };
 
-      // Commands (must match firmware)
       const CMD = {
         TARGET_ANGLE: 0x01, SET_CURRENT_MA: 0x02, SET_SPEED_LIMIT: 0x03, SET_PID: 0x04, SET_ID: 0x05,
         SET_MICROSTEPS: 0x06, SET_STEALTHCHOP: 0x07, SET_EXT_MODE: 0x08, SET_UNITS: 0x09, SET_ENC_INVERT: 0x0A,
         SET_ENABLED: 0x0B, SET_STEPS_PER_REV: 0x0C, DO_CALIBRATE: 0x0D, DO_HOMING: 0x0E, SET_ENDSTOP: 0x0F,
         SET_EXT_ENCODER: 0x10, SET_ACCEL_LIMIT: 0x11, SET_DIR_INVERT: 0x12, SET_EXT_SPI: 0x13,
         DO_AUTO_TUNE: 0x14,
-        TELEMETRY: 0x01, GET_CONFIG: 0x20
+        TELEMETRY: 0x01,
+        IMU_TELEMETRY: 0x02,
+        RESET_ORIENT: 0xA2
       };
 
       const TUNE_STATES = ['Idle', 'Prep', 'Fwd', 'Bwd', 'Inc', 'Done'];
-      const TELEMETRY_CAN_ID = 0x000;
       const header = (id, cmd, len) => new Uint8Array([id & 0xFF, (id >> 8) & 0xFF, cmd & 0xFF, len & 0xFF]);
 
       const frame = {
@@ -810,7 +921,7 @@
           const p = new Uint8Array(8); p.set(f32le(min), 0); p.set(f32le(max), 4);
           const h = header(id, CMD.DO_AUTO_TUNE, p.length), o = new Uint8Array(h.length + p.length); o.set(h, 0); o.set(p, h.length); return o;
         },
-        getConfig: (id) => header(id, CMD.GET_CONFIG, 0)
+        resetOrient: (id) => header(id, CMD.RESET_ORIENT, 0)
       };
 
       // THEME – global
@@ -826,6 +937,9 @@
       const devListEl = $('devList'), devSearch = $('devSearch');
       const statusEl = $('status'), previewEl = $('preview');
       const activeIdEl = $('activeId'), activeUnitsEl = $('activeUnits'), targetUnitsEl = $('targetUnits');
+      const motorUnitsTag = $('motorUnitsTag'), imuTag = $('imuTag');
+      const motorControls = $('motorControls'), imuControls = $('imuControls'), imuCube = $('imuCube');
+      
       const inTarget = $('inTarget'), inRps = $('inRps'), inRps2 = $('inRps2'), inmA = $('inmA');
       const inTuneMin = $('inTuneMin'), inTuneMax = $('inTuneMax');
       const tglEnable = $('tglEnable');
@@ -837,6 +951,10 @@
       const tblBodies = $('tblBodies');
       const logEl = $('log');
       const stallWarn = $('stallWarn'), calibWarn = $('calibWarn');
+
+      // IMU Vals
+      const valRoll = $('valRoll'), valPitch = $('valPitch'), valYaw = $('valYaw');
+      const valAx = $('valAx'), valAy = $('valAy'), valAz = $('valAz');
 
       const setStatus = txt => statusEl.innerHTML = `<small>${txt}</small>`;
       const logLine = (p, buf, color) => {
@@ -850,7 +968,7 @@
       const logInfo = t => logLine('*', t, '#f59e0b');
 
       // App state
-      const store = { devices: new Map(), tiles: new Map(), activeId: null, requestedCfg: new Set(), lastCfgReqId: null };
+      const store = { devices: new Map(), tiles: new Map(), activeId: null, lastCfgReqId: null };
 
       // Tiles
       function makeTile(id, st) {
@@ -936,56 +1054,81 @@
           t.root.classList.toggle('active', act);
           t.root.setAttribute('aria-selected', act ? 'true' : 'false');
         }
-        // Only motors have config; IMUs will just ignore this
-        sendBytes(frame.getConfig(id));
-        store.lastCfgReqId = id;
+        // Force sync on selection to update UI with latest telemetry data
+        syncFormFromState(id);
         renderActive(); gate(); preview();
       }
 
       function renderActive() {
         const st = store.devices.get(store.activeId);
         activeIdEl.textContent = (store.activeId == null) ? '—' : (`0x${store.activeId.toString(16).toUpperCase()} (${store.activeId})`);
-
-        if (st && st.type === 'imu') {
-          activeUnitsEl.textContent = 'deg';
-          targetUnitsEl.textContent = 'deg';
-          $('btn90').textContent = '90°';
-          $('btn180').textContent = '180°';
-          tlmSpeed.textContent = '—';
-          tlmAngle.textContent = st.yaw != null ? st.yaw.toFixed(2) : '—';
-          const tempVal = (st.imuTemp != null ? st.imuTemp : st.temp);
-          tlmTemp.textContent = tempVal != null ? tempVal.toFixed(1) : '—';
-          tlmMin.textContent = '—';
-          tlmMax.textContent = '—';
-          tlmCal.textContent = '—';
-          tlmStalled.textContent = '—';
-          tlmTune.textContent = '—';
-          return;
+        
+        const isImu = (st && st.type === 'imu');
+        
+        // Toggle Controls visibility
+        if (isImu) {
+            motorControls.classList.add('hidden');
+            imuControls.classList.remove('hidden');
+            imuTag.classList.remove('hidden');
+            motorUnitsTag.classList.add('hidden');
+            // Hide motor specific params in setup
+            document.querySelectorAll('.motor-specific').forEach(el => el.classList.add('hidden'));
+            
+            // IMU Stats
+            const r = st.roll || 0, p = st.pitch || 0, y = st.yaw || 0;
+            valRoll.textContent = r.toFixed(2);
+            valPitch.textContent = p.toFixed(2);
+            valYaw.textContent = y.toFixed(2);
+            valAx.textContent = (st.ax||0).toFixed(2);
+            valAy.textContent = (st.ay||0).toFixed(2);
+            valAz.textContent = (st.az||0).toFixed(2);
+            
+            // 3D Cube Transform
+            imuCube.style.transform = `rotateX(${p}deg) rotateZ(${y * -1}deg) rotateY(${r}deg)`;
+            
+            // Telemetry sidebar
+             tlmSpeed.textContent = '—';
+             tlmAngle.textContent = '—';
+             const tempVal = (st.imuTemp != null ? st.imuTemp : st.temp);
+             tlmTemp.textContent = tempVal != null ? tempVal.toFixed(1) : '—';
+             tlmMin.textContent = '—';
+             tlmMax.textContent = '—';
+             tlmCal.textContent = '—';
+             tlmStalled.textContent = '—';
+             tlmTune.textContent = '—';
+             stallWarn.classList.add('hidden');
+        } else {
+            motorControls.classList.remove('hidden');
+            imuControls.classList.add('hidden');
+            imuTag.classList.add('hidden');
+            motorUnitsTag.classList.remove('hidden');
+            document.querySelectorAll('.motor-specific').forEach(el => el.classList.remove('hidden'));
+            
+            // Existing Motor Render Logic
+            const units = st ? (st.units || 0) : 0;
+            activeUnitsEl.textContent = units === 1 ? 'deg' : 'rad';
+            targetUnitsEl.textContent = units === 1 ? 'deg' : 'rad';
+            $('btn90').textContent = units === 1 ? '90°' : 'π/2';
+            $('btn180').textContent = units === 1 ? '180°' : 'π';
+    
+            tlmSpeed.textContent = st && st.speed != null ? st.speed.toFixed(4) : '—';
+            tlmAngle.textContent = st && st.angle != null ? st.angle.toFixed(4) : '—';
+            tlmTemp.textContent = st && st.temp != null ? st.temp.toFixed(1) : '—';
+            tlmMin.textContent = st && st.min != null ? (st.min ? 'YES' : 'NO') : '—';
+            tlmMax.textContent = st && st.max != null ? (st.max ? 'YES' : 'NO') : '—';
+            tlmCal.textContent = st && st.cal ? 'YES' : 'NO';
+    
+            // Stalled + Tuning
+            const isStalled = !!(st && st.stalled);
+            tlmStalled.textContent = isStalled ? 'YES' : 'NO';
+            tlmStalled.style.color = isStalled ? '#ef4444' : 'inherit';
+            stallWarn.classList.toggle('hidden', !isStalled);
+    
+            const tuneVal = (st && st.tuneState) || 0;
+            const tuneStr = TUNE_STATES[tuneVal] || String(tuneVal);
+            tlmTune.textContent = tuneStr;
+            tlmTune.style.color = (tuneVal !== 0) ? '#60a5fa' : 'inherit';
         }
-
-        const units = st ? (st.units || 0) : 0;
-        activeUnitsEl.textContent = units === 1 ? 'deg' : 'rad';
-        targetUnitsEl.textContent = units === 1 ? 'deg' : 'rad';
-        $('btn90').textContent = units === 1 ? '90°' : 'π/2';
-        $('btn180').textContent = units === 1 ? '180°' : 'π';
-
-        tlmSpeed.textContent = st && st.speed != null ? st.speed.toFixed(4) : '—';
-        tlmAngle.textContent = st && st.angle != null ? st.angle.toFixed(4) : '—';
-        tlmTemp.textContent = st && st.temp != null ? st.temp.toFixed(1) : '—';
-        tlmMin.textContent = st && st.min != null ? (st.min ? 'YES' : 'NO') : '—';
-        tlmMax.textContent = st && st.max != null ? (st.max ? 'YES' : 'NO') : '—';
-        tlmCal.textContent = st && st.cal ? 'YES' : 'NO';
-
-        // Stalled + Tuning
-        const isStalled = !!(st && st.stalled);
-        tlmStalled.textContent = isStalled ? 'YES' : 'NO';
-        tlmStalled.style.color = isStalled ? '#ef4444' : 'inherit';
-        stallWarn.classList.toggle('hidden', !isStalled);
-
-        const tuneVal = (st && st.tuneState) || 0;
-        const tuneStr = TUNE_STATES[tuneVal] || String(tuneVal);
-        tlmTune.textContent = tuneStr;
-        tlmTune.style.color = (tuneVal !== 0) ? '#60a5fa' : 'inherit';
       }
 
       function renderTable() {
@@ -999,16 +1142,17 @@
           tr.appendChild(td(id));
 
           if (s.type === 'imu') {
-            tr.appendChild(td('deg'));
-            tr.appendChild(td('—'));
-            tr.appendChild(td(s.yaw != null ? s.yaw.toFixed(2) : '—'));
-            const tempVal = (s.imuTemp != null ? s.imuTemp : s.temp);
-            tr.appendChild(td(tempVal != null ? tempVal.toFixed(1) : '—'));
-            tr.appendChild(td('—'));
-            tr.appendChild(td('—'));
-            tr.appendChild(td('—'));
-            tr.appendChild(td('—'));
-            tr.appendChild(td('—'));
+            tr.appendChild(td('deg')); // Units
+            tr.appendChild(td(`R: ${(s.roll||0).toFixed(2)}`)); // Speed col reused
+            tr.appendChild(td(`P: ${(s.pitch||0).toFixed(2)}`)); // Angle col reused
+            tr.appendChild(td(`Y: ${(s.yaw||0).toFixed(2)}`));   // Temp col reused
+            
+            // Blank out motor columns for IMU
+            tr.appendChild(td('—')); // Stalled
+            tr.appendChild(td('—')); // Tune
+            tr.appendChild(td('—')); // Min
+            tr.appendChild(td('—')); // Max
+            tr.appendChild(td('—')); // Cal
           } else {
             tr.appendChild(td(s.units === 1 ? 'deg' : 'rad'));
             tr.appendChild(td(s.speed != null ? s.speed.toFixed(3) : '—'));
@@ -1059,78 +1203,62 @@
         previewEl.textContent = bytesHex(frame.target(id, val));
       }
 
-      // Telemetry parsing (matches firmware packing for MOTORS)
-      // Config(36) + Speed(4) + Angle(4) + Target(4) + Temp(4) + Stalled(1) + Tune(1) + Min(1) + Max(1)
       const AXIS_CFG_SIZE = 36;
-      function parseTelemetryPayload(u8arr) {
+      function parseTelemetryPayload(canArbId, u8arr) {
         if (u8arr.length < AXIS_CFG_SIZE + 20) return null;
         const dv = new DataView(u8arr.buffer, u8arr.byteOffset, u8arr.byteLength);
-        let o = 0; o += 4; o += 2; o += 2;
-        const units = dv.getUint8(o); o += 1;
-        const flags = dv.getUint8(o); o += 1;
-        o += 2; o += 2; o += 4; o += 4; o += 4; o += 4; o += 4;
-        const canArbId = dv.getUint16(o, true); o += 2;
-
-        // Tail
-        const speed = dv.getFloat32(o, true); o += 4;
-        const angle = dv.getFloat32(o, true); o += 4;
-        const target = dv.getFloat32(o, true); o += 4; // Added
-        const temp = dv.getFloat32(o, true); o += 4;
-        const stalled = dv.getUint8(o) !== 0; o += 1;   // Added
-        const tuneState = dv.getUint8(o); o += 1;       // Added
-        const min = dv.getUint8(o) !== 0; o += 1;
-        const max = dv.getUint8(o) !== 0; o += 1;
-
-        const cal = (flags & 0x40) !== 0;
-        return { id: canArbId, units, speed, angle, target, temp, stalled, tuneState, min, max, cal, flags };
-      }
-
-      // IMU telemetry parsing (Option D: structure-based)
-      function parseImuTelemetry(u8arr, headerId) {
-        // Expect at least first 32 bytes: [u32 id][7 floats]
-        if (u8arr.length < 32) return null;
-        const dv = new DataView(u8arr.buffer, u8arr.byteOffset, u8arr.byteLength);
-        const devId32 = dv.getUint32(0, true);
-        const roll = dv.getFloat32(4, true);
-        const pitch = dv.getFloat32(8, true);
-        const yaw = dv.getFloat32(12, true);
-        const ax = dv.getFloat32(16, true);
-        const ay = dv.getFloat32(20, true);
-        const az = dv.getFloat32(24, true);
-        const temp = dv.getFloat32(28, true);
-
-        if (!isFinite(roll) || !isFinite(pitch) || !isFinite(yaw)) return null;
-        const id = (headerId != null) ? headerId : (devId32 & 0x7FF);
-        return { id, devId32, roll, pitch, yaw, ax, ay, az, temp };
-      }
-
-      function parseConfigPayload(u8arr) {
-        // Match Firmware/Python struct (36 bytes)
-        // <I H H B B H H f f f f f H
-        if (u8arr.length < 36) return null;
-        const dv = new DataView(u8arr.buffer, u8arr.byteOffset, u8arr.byteLength);
         let o = 0;
-        const crc32 = dv.getUint32(o, true); o += 4;
+        o += 4; // crc32
         const microsteps = dv.getUint16(o, true); o += 2;
         const stepsPerRev = dv.getUint16(o, true); o += 2;
         const units = dv.getUint8(o); o += 1;
         const flags = dv.getUint8(o); o += 1;
-        const encZero = dv.getUint16(o, true); o += 2;
+        o += 2; // encZero
         const currentmA = dv.getUint16(o, true); o += 2;
         const maxRPS = dv.getFloat32(o, true); o += 4;
         const maxRPS2 = dv.getFloat32(o, true); o += 4;
         const kp = dv.getFloat32(o, true); o += 4;
         const ki = dv.getFloat32(o, true); o += 4;
         const kd = dv.getFloat32(o, true); o += 4;
-        const canId = dv.getUint16(o, true); o += 2;
+        const payloadCanId = dv.getUint16(o, true); o += 2;
 
+        // Tail
+        const speed = dv.getFloat32(o, true); o += 4;
+        const angle = dv.getFloat32(o, true); o += 4;
+        const target = dv.getFloat32(o, true); o += 4;
+        const temp = dv.getFloat32(o, true); o += 4;
+        const stalled = dv.getUint8(o) !== 0; o += 1;
+        const tuneState = dv.getUint8(o); o += 1;
+        const min = dv.getUint8(o) !== 0; o += 1;
+        const max = dv.getUint8(o) !== 0; o += 1;
+
+        const cal = (flags & 0x40) !== 0;
         return {
-          crc32, microsteps, stepsPerRev, units, flags, encZero, currentmA,
-          maxRPS, maxRPS2, kp, ki, kd, canId
+          id: payloadCanId, units, speed, angle, target, temp, stalled, tuneState, min, max, cal, flags,
+          microsteps, stepsPerRev, currentmA, maxRPS, maxRPS2, kp, ki, kd
         };
       }
 
-      // Flags (bit layout used by FW)
+      // IMU telemetry parsing
+      function parseImuTelemetry(canArbId, u8arr) {
+        if (u8arr.length < 28) return null;
+        const dv = new DataView(u8arr.buffer, u8arr.byteOffset, u8arr.byteLength);
+        
+        const roll = dv.getFloat32(0, true);
+        const pitch = dv.getFloat32(4, true);
+        const yaw = dv.getFloat32(8, true);
+        const ax = dv.getFloat32(12, true);
+        const ay = dv.getFloat32(16, true);
+        const az = dv.getFloat32(20, true);
+        const temp = dv.getFloat32(24, true);
+
+        if (!isFinite(roll) || !isFinite(pitch) || !isFinite(yaw)) return null;
+        
+        // Return ID from header
+        return { id: canArbId, roll, pitch, yaw, ax, ay, az, temp };
+      }
+
+      // Flags
       const FL = { ENCINV: 0x01, DIRINV: 0x02, STEALTH: 0x04, EXTMODE: 0x08, ENDSTOP: 0x10, EXTENC: 0x20, CAL: 0x40 };
 
       function applyFlagsToFormFromByte(flags) {
@@ -1163,18 +1291,39 @@
         setCB($('tglEncInvert'), (fl & FL.ENCINV));
         setCB($('tglDirInvert'), (fl & FL.DIRINV));
 
-        // Scalars
-        if (st.microsteps != null) $('ms').value = String(st.microsteps);
-        if (st.stepsPerRev != null) $('spr').value = String(st.stepsPerRev);
-        if (st.currentmA != null) $('inmA').value = String(st.currentmA);
+        // Update inputs only if NOT focused to avoid overwriting user typing
+        const setVal = (el, v) => {
+          if (el && document.activeElement !== el && v != null) {
+            el.value = String(v);
+          }
+        };
+
+        setVal($('ms'), st.microsteps);
+        setVal($('spr'), st.stepsPerRev);
+        setVal($('inmA'), st.currentmA);
 
         // Populate Speed/Accel Limits (from config)
-        if (st.maxRPS != null) $('inRps').value = st.maxRPS.toFixed(2).replace(/\.0+$/, '').replace(/\.$/, '');
-        if (st.maxRPS2 != null) $('inRps2').value = st.maxRPS2.toFixed(1).replace(/\.0+$/, '').replace(/\.$/, '');
+        if (st.maxRPS != null) {
+          const v = st.maxRPS.toFixed(2).replace(/\.0+$/, '').replace(/\.$/, '');
+          setVal($('inRps'), v);
+        }
+        if (st.maxRPS2 != null) {
+          const v = st.maxRPS2.toFixed(1).replace(/\.0+$/, '').replace(/\.$/, '');
+          setVal($('inRps2'), v);
+        }
 
-        if (st.kp != null) $('pidKp').value = st.kp.toFixed(3).replace(/\.0+$/, '').replace(/\.$/, '');
-        if (st.ki != null) $('pidKi').value = st.ki.toFixed(3).replace(/\.0+$/, '').replace(/\.$/, '');
-        if (st.kd != null) $('pidKd').value = st.kd.toFixed(3).replace(/\.0+$/, '').replace(/\.$/, '');
+        if (st.kp != null) {
+          const v = st.kp.toFixed(3).replace(/\.0+$/, '').replace(/\.$/, '');
+          setVal($('pidKp'), v);
+        }
+        if (st.ki != null) {
+          const v = st.ki.toFixed(3).replace(/\.0+$/, '').replace(/\.$/, '');
+          setVal($('pidKi'), v);
+        }
+        if (st.kd != null) {
+          const v = st.kd.toFixed(3).replace(/\.0+$/, '').replace(/\.$/, '');
+          setVal($('pidKd'), v);
+        }
 
         // Also update labels that depend on units
         $('activeUnits').textContent = isDeg ? 'deg' : 'rad';
@@ -1248,17 +1397,17 @@
           if (rxBuf.length < total) return;
           const payload = rxBuf.subarray(4, 4 + len);
 
-          if (id === TELEMETRY_CAN_ID && cmd === CMD.TELEMETRY) {
-            const p = parseTelemetryPayload(payload);
+          // DEBUG LOGGING
+          // Check console for raw packets
+          console.log(`PKT ID:0x${id.toString(16)} CMD:0x${cmd.toString(16)} LEN:${len}`);
+
+          // 1. Motor Telemetry (Command 0x01) - ID can be anything
+          if (cmd === CMD.TELEMETRY) {
+            const p = parseTelemetryPayload(id, payload); // Pass ID from header
             if (p) {
               const prev = store.devices.get(p.id) || {};
-
-              // Detect Tuning Completion: If state goes to DONE (5) and wasn't before
-              // We trigger a Config Fetch to see new limits
-              if (p.tuneState === 5 && prev.tuneState !== 5) {
-                logInfo(`Auto-Tune complete for ID ${p.id}. Fetching config...`);
-                sendBytes(frame.getConfig(p.id));
-              }
+              const isNew = !store.devices.has(p.id);
+              const tuneFinished = (p.tuneState === 5 && prev.tuneState !== 5);
 
               const st = {
                 ...prev,
@@ -1274,25 +1423,41 @@
                 max: p.max,
                 cal: p.cal,
                 flags: p.flags,
-                ts: Date.now()
+                ts: Date.now(),
+                microsteps: p.microsteps,
+                stepsPerRev: p.stepsPerRev,
+                currentmA: p.currentmA,
+                maxRPS: p.maxRPS,
+                maxRPS2: p.maxRPS2,
+                kp: p.kp,
+                ki: p.ki,
+                kd: p.kd
               };
+
               store.devices.set(p.id, st);
               updateTile(p.id, st);
+
               if (store.activeId === p.id) {
-                syncFormFromState(p.id);
+                if (tuneFinished) {
+                  logInfo(`Auto-Tune complete for ID ${p.id}. Syncing UI.`);
+                  syncFormFromState(p.id);
+                }
                 renderActive();
+                if (!tuneFinished) {
+                  syncFormFromState(p.id);
+                }
               }
-              if (store.activeId === null) setActive(p.id);
+
+              if (store.activeId === null || isNew) {
+                if (store.activeId === null) setActive(p.id);
+                if (store.activeId === p.id) syncFormFromState(p.id);
+              }
               renderActive(); renderTable(); gate();
-              if (!store.requestedCfg.has(p.id)) {
-                store.requestedCfg.add(p.id);
-                sendBytes(frame.getConfig(p.id));
-                store.lastCfgReqId = p.id;
-              }
             }
-          } else if (id !== TELEMETRY_CAN_ID && cmd === CMD.TELEMETRY) {
-            // Try IMU decode
-            const imu = parseImuTelemetry(payload, id);
+          } 
+          // 2. IMU Telemetry (Command 0x02)
+          else if (cmd === CMD.IMU_TELEMETRY) {
+            const imu = parseImuTelemetry(id, payload); // Pass ID from header
             if (imu) {
               const prev = store.devices.get(imu.id) || {};
               const st = {
@@ -1305,48 +1470,21 @@
                 ay: imu.ay,
                 az: imu.az,
                 imuTemp: imu.temp,
-                temp: imu.temp, // also keep in common field for table
+                temp: imu.temp,
                 ts: Date.now()
               };
               store.devices.set(imu.id, st);
               updateTile(imu.id, st);
-              // Do NOT auto-send config to IMU; do NOT auto-activate to avoid disturbing motor UX
               if (store.activeId === null) {
-                // If there is literally no active device at all, we may select this IMU
                 setActive(imu.id);
               } else {
                 renderActive();
               }
               renderTable(); gate();
             }
-          } else if (id === TELEMETRY_CAN_ID && cmd === CMD.GET_CONFIG) {
-            const cfg = parseConfigPayload(payload);
-            if (cfg) {
-              const devId = store.lastCfgReqId ?? store.activeId;
-              if (devId != null) {
-                const prev = store.devices.get(devId) || {};
-                const st = {
-                  ...prev,
-                  stepsPerRev: cfg.stepsPerRev,
-                  microsteps: cfg.microsteps,
-                  currentmA: cfg.currentmA,
-                  units: cfg.units,
-                  flags: cfg.flags,
-                  maxRPS: cfg.maxRPS,
-                  maxRPS2: cfg.maxRPS2,
-                  kp: cfg.kp,
-                  ki: cfg.ki,
-                  kd: cfg.kd
-                };
-                store.devices.set(devId, st);
-                updateTile(devId, st);
-                if (devId === store.activeId) {
-                  syncFormFromState(devId);
-                }
-                logInfo(`Config applied to ID ${devId}`);
-                renderActive(); gate();
-              }
-            }
+          } else {
+             const hexId = id.toString(16).toUpperCase();
+             const hexCmd = cmd.toString(16).toUpperCase();
           }
 
           rxBuf = rxBuf.subarray(total);
@@ -1406,6 +1544,16 @@
         const max = parseFloat(inTuneMax.value) || 0;
         sendBytes(frame.autoTune(store.activeId, min, max));
         setStatus('Auto-Tune started...');
+      };
+      
+      // Zero IMU Button
+      $('btnImuZero').onclick = () => {
+        if (store.activeId == null) return;
+        const st = store.devices.get(store.activeId);
+        if (st && st.type === 'imu') {
+            sendBytes(frame.resetOrient(store.activeId));
+            logInfo(`Sent Zero Orientation to IMU ${store.activeId}`);
+        }
       };
 
       tglEnable.onchange = () => {
@@ -1529,7 +1677,7 @@
         for (let i = 0; i < ids.length; i++) {
           const cur = ids[i], target = clamp11(start + i);
           const dev = store.devices.get(cur);
-          if (!dev || dev.type === 'imu') continue; // don't renumber IMUs via bulk
+          if (!dev || dev.type === 'imu') continue;
           if (cur === target) continue;
           await sendBytes(frame.setId(cur, target));
           const st = store.devices.get(cur) || {};
@@ -1539,7 +1687,7 @@
           if (tile) {
             tile.root.dataset.id = String(target);
             tile.idtxt.textContent = '0x' + target.toString(16).toUpperCase();
-            store.tiles.delete(cur);
+            store.tiles.delete(oldId);
             store.tiles.set(target, tile);
           }
         }

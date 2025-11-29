@@ -2,18 +2,20 @@ from __future__ import annotations
 import struct, threading, time
 from dataclasses import dataclass, field
 from enum import IntEnum
-from typing import Optional, Dict
+from typing import Optional, Dict, Union
 import serial
 from serial.tools import list_ports
 
-# ========= Protocol (MATCHES HTML UI AND FIRMWARE) =========
-# TX/RX frame: [ID_LO, ID_HI, CMD, LEN, PAYLOAD...]
-HDR_FMT = "<HBB"  # id:uint16, cmd:uint8, len:uint8
+HDR_FMT = "<HBB"
 HDR_SIZE = struct.calcsize(HDR_FMT)
-MAX_PAYLOAD = 64  # guard, fw usually < 64
-TELEMETRY_CAN_ID = 0x000
+MAX_PAYLOAD = 64
+
+# Motor Constants
 TELEMETRY_CMD = 0x01
 GET_CONFIG_CMD = 0x20
+
+# IMU Constants
+IMU_TELEMETRY_CMD = 0x02
 
 
 class Cmd(IntEnum):
@@ -36,8 +38,10 @@ class Cmd(IntEnum):
     SET_ACCEL_LIMIT = 0x11
     SET_DIR_INVERT = 0x12
     SET_EXT_SPI = 0x13
-    DO_AUTO_TUNE = 0x14  # New Auto Tune Command
+    DO_AUTO_TUNE = 0x14
     GET_CONFIG = 0x20
+    SET_IMU_ID = 0xA1
+    RESET_ORIENT = 0xA2
 
 
 class TuningState(IntEnum):
@@ -49,15 +53,16 @@ class TuningState(IntEnum):
     DONE = 5
 
 
-# ========= Wire formats used in telemetry (same as your FW) =========
+# ========= Wire formats =========
 AXIS_CONFIG_FMT = "<I H H B B H H f f f f f H"
 AXIS_CONFIG_SIZE = struct.calcsize(AXIS_CONFIG_FMT)
 
-# Updated Telemetry Tail:
-# float speed, float angle, float target, float temp,
-# bool stalled, uint8 tuneState, bool minTrig, bool maxTrig
 TELEM_TAIL_FMT = "<f f f f B B B B"
 TELEM_TAIL_SIZE = struct.calcsize(TELEM_TAIL_FMT)
+
+# IMU Payload: 7 floats (28 bytes)
+IMU_PAYLOAD_FMT = "<fffffff"
+IMU_PAYLOAD_SIZE = struct.calcsize(IMU_PAYLOAD_FMT)
 
 
 @dataclass
@@ -95,10 +100,22 @@ class AxisState:
     currentAngle: float
     targetAngle: float
     temperature: float
-    stalled: bool  # New
-    tuneState: TuningState  # New
+    stalled: bool
+    tuneState: TuningState
     minTriggered: bool
     maxTriggered: bool
+    timestamp: float = field(default_factory=time.time)
+
+
+@dataclass
+class ImuState:
+    roll: float
+    pitch: float
+    yaw: float
+    ax: float
+    ay: float
+    az: float
+    temp: float
     timestamp: float = field(default_factory=time.time)
 
 
@@ -119,7 +136,6 @@ _b01 = lambda b: struct.pack("<B", 1 if b else 0)
 
 
 def _pack_homing(p: HomingParams) -> bytes:
-    # <B f B f B> = 11 bytes (exactly what your FW expects)
     return struct.pack(
         "<B f B f B",
         1 if p.useMINTrigger else 0,
@@ -208,6 +224,16 @@ def _parse_telemetry(payload: bytes) -> Optional[AxisState]:
     )
 
 
+def _parse_imu_telemetry(payload: bytes) -> Optional[ImuState]:
+    if len(payload) < IMU_PAYLOAD_SIZE:
+        return None
+    # Unpack 7 floats
+    roll, pitch, yaw, ax, ay, az, temp = struct.unpack(
+        IMU_PAYLOAD_FMT, payload[:IMU_PAYLOAD_SIZE]
+    )
+    return ImuState(roll, pitch, yaw, ax, ay, az, temp)
+
+
 # ========= Bridge =========
 class Bridge:
     def __init__(self, port: Optional[str] = None, baud=115200, timeout=0.05):
@@ -218,7 +244,10 @@ class Bridge:
         self._rx_buf = bytearray()
         self._stop = threading.Event()
         self._reader: Optional[threading.Thread] = None
-        self._state: Dict[int, AxisState] = {}
+
+        # State stores both Stepper and IMU states
+        # Key: CAN ID (int). Value: AxisState or ImuState
+        self._state: Dict[int, Union[AxisState, ImuState]] = {}
         self._lock = threading.Lock()
 
     @staticmethod
@@ -282,18 +311,21 @@ class Bridge:
             payload = bytes(self._rx_buf[HDR_SIZE:total])
             del self._rx_buf[:total]
 
-            # telemetry/config broadcasts
-            if can_id == TELEMETRY_CAN_ID and cmd == TELEMETRY_CMD:
+            # 1. Stepper Telemetry (ID=0x000, CMD=0x01)
+            if cmd == TELEMETRY_CMD:
                 pkt = _parse_telemetry(payload)
                 if pkt:
                     with self._lock:
                         self._state[pkt.config.canArbId] = pkt
-            elif can_id == TELEMETRY_CAN_ID and cmd == GET_CONFIG_CMD:
+
+            # 2. Stepper Config Response (ID=0x000, CMD=0x20)
+            elif cmd == GET_CONFIG_CMD:
                 if len(payload) >= AXIS_CONFIG_SIZE:
                     cfg = _parse_axis_config(payload[:AXIS_CONFIG_SIZE])
                     with self._lock:
                         st = self._state.get(cfg.canArbId)
-                        if st:
+                        # We only update if it exists and is an AxisState
+                        if st and isinstance(st, AxisState):
                             st.config = cfg
                         else:
                             # seed with minimal state
@@ -309,8 +341,15 @@ class Bridge:
                                 maxTriggered=False,
                             )
 
+            # 3. IMU Telemetry (CMD=0x02)
+            elif cmd == IMU_TELEMETRY_CMD:
+                imu_pkt = _parse_imu_telemetry(payload)
+                if imu_pkt:
+                    with self._lock:
+                        self._state[can_id] = imu_pkt
+
     # ---- state getters
-    def get_state(self, can_id: int) -> Optional[AxisState]:
+    def get_state(self, can_id: int) -> Union[AxisState, ImuState, None]:
         with self._lock:
             return self._state.get(can_id)
 
@@ -376,9 +415,14 @@ class Bridge:
         self.send(can_id, Cmd.DO_HOMING, _pack_homing(p))
 
     def do_auto_tune(self, can_id: int, min_angle: float, max_angle: float):
-        # Sends two floats: min, max (degrees usually, handled by firmware units logic)
         payload = struct.pack("<ff", float(min_angle), float(max_angle))
         self.send(can_id, Cmd.DO_AUTO_TUNE, payload)
+
+    def set_imu_id(self, current_id: int, new_id: int):
+        self.send(current_id, Cmd.SET_IMU_ID, _u16(new_id & 0x7FF))
+
+    def reset_orientation(self, can_id: int):
+        self.send(can_id, Cmd.RESET_ORIENT, b"")
 
 
 # ========= Friendly Stepper wrapper (pins id) =========
@@ -457,4 +501,65 @@ class Stepper:
         self.bridge.do_auto_tune(self.id, min_angle, max_angle)
 
     def get_axis_state(self) -> Optional[AxisState]:
-        return self.bridge.get_state(self.id)
+        st = self.bridge.get_state(self.id)
+        if isinstance(st, AxisState):
+            return st
+        return None
+
+
+# ========= Friendly IMU wrapper =========
+class IMU:
+    def __init__(self, bridge: Bridge, control_id: int = 0x003):
+        """
+        :param bridge: The shared Bridge instance.
+        :param control_id: The CAN ID used to send commands (like Reset) to the IMU. Default 0x003.
+        """
+        self.bridge = bridge
+        self.control_id = control_id
+
+    def reset_orientation(self):
+        """Sends the orientation reset command to the IMU."""
+        self.bridge.reset_orientation(self.control_id)
+
+    def set_can_id(self, new_id: int):
+        """
+        Sets the CAN ID of the IMU.
+        Note: This changes the ID the IMU listens to for future commands.
+        """
+        self.bridge.set_imu_id(self.control_id, new_id)
+        self.control_id = new_id & 0x7FF
+
+    def get_state(self) -> Optional[ImuState]:
+        """Returns the latest IMU telemetry state (Roll, Pitch, Yaw, Accel, Temp)."""
+        st = self.bridge.get_state(self.control_id)
+        if isinstance(st, ImuState):
+            return st
+        return None
+
+    def get_roll(self) -> Optional[float]:
+        st = self.get_state()
+        return st.roll if st else None
+
+    def get_pitch(self) -> Optional[float]:
+        st = self.get_state()
+        return st.pitch if st else None
+
+    def get_yaw(self) -> Optional[float]:
+        st = self.get_state()
+        return st.yaw if st else None
+
+    def get_accel_x(self) -> Optional[float]:
+        st = self.get_state()
+        return st.ax if st else None
+
+    def get_accel_y(self) -> Optional[float]:
+        st = self.get_state()
+        return st.ay if st else None
+
+    def get_accel_z(self) -> Optional[float]:
+        st = self.get_state()
+        return st.az if st else None
+
+    def get_temperature(self) -> Optional[float]:
+        st = self.get_state()
+        return st.temp if st else None

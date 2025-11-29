@@ -185,8 +185,8 @@ namespace CanCmdBus
       uint8_t minL = 0, maxL = 0;
       if (!cmd_len_bounds(cmd, minL, maxL))
         continue; // unknown cmd
-      if (payLen < minL || payLen > maxL)
-        continue; // malformed len
+      // if (payLen < minL || payLen > maxL)
+      //   continue; // malformed len
 
       const uint8_t idx = findIndex(cmd);
       if (idx == 0xFF || s_table[idx].fn == nullptr)

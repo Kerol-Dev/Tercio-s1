@@ -40,7 +40,7 @@ enum : uint8_t
   CMD_DO_CALIBRATE = 0x0D,
   CMD_DO_HOMING = 0x0E,
   CMD_SET_ENDSTOP = 0x0F,
-  CMD_AUTO_TUNE = 0x14 
+  CMD_AUTO_TUNE = 0x14
 };
 
 // -----------------------------------------------------------------------------
@@ -87,12 +87,20 @@ bool stallDetected = false;
 unsigned long lastMoveTimestamp = 0;
 float lastStallCheckAngle = 0.0f;
 
-const float STALL_THRESHOLD_RAD = 1.0f * DEG_TO_RAD; 
+const float STALL_THRESHOLD_RAD = 1.0f * DEG_TO_RAD;
 
 // -----------------------------------------------------------------------------
 // Auto-Tuning Variables
 // -----------------------------------------------------------------------------
-enum TuningState : uint8_t { TUNE_IDLE, TUNE_PREP, TUNE_FWD, TUNE_BWD, TUNE_INCREASE, TUNE_DONE };
+enum TuningState : uint8_t
+{
+  TUNE_IDLE,
+  TUNE_PREP,
+  TUNE_FWD,
+  TUNE_BWD,
+  TUNE_INCREASE,
+  TUNE_DONE
+};
 TuningState tuneState = TUNE_IDLE;
 unsigned long tuneDoneTimestamp = 0;
 float tuneMinRad = 0;
@@ -103,7 +111,7 @@ float tuneCurrentRPS2 = 0;
 const float TUNE_START_RPS = 5.0f;
 const float TUNE_START_RPS2 = 40.0f;
 const float TUNE_INC_RPS = 3.0f;
-const float TUNE_INC_RPS2 = 10.0f;
+const float TUNE_INC_RPS2 = 12.0f;
 
 // -----------------------------------------------------------------------------
 // Homing wire payload <B f B f B> (bools as u8; offset/speed as float32)
@@ -137,7 +145,8 @@ static inline bool readBool01(const uint8_t *p, uint8_t len, uint8_t off, bool &
 // -----------------------------------------------------------------------------
 static void onTarget(const CanCmdBus::CmdFrame &f)
 {
-  if (tuneState != TUNE_IDLE) {
+  if (tuneState != TUNE_IDLE)
+  {
     tuneState = TUNE_IDLE;
   }
 
@@ -146,25 +155,28 @@ static void onTarget(const CanCmdBus::CmdFrame &f)
     return;
 
   const float rad = (cfg.units == 1) ? angle * DEG_TO_RAD : angle;
-  
+
   stallDetected = false;
   lastMoveTimestamp = millis();
   lastStallCheckAngle = encoder.angle(Encoder::Radians);
-  
+
   axis.setTargetAngleRad(rad);
 }
 
 static void onAutoTune(const CanCmdBus::CmdFrame &f)
 {
   float minDeg, maxDeg;
-  if (!CanCmdBus::readF32(f.payload, f.len, 0, minDeg)) return;
-  if (!CanCmdBus::readF32(f.payload, f.len, 4, maxDeg)) return;
+  if (!CanCmdBus::readF32(f.payload, f.len, 0, minDeg))
+    return;
+  if (!CanCmdBus::readF32(f.payload, f.len, 4, maxDeg))
+    return;
 
-  if (!cfg.calibratedOnce) return;
+  if (!cfg.calibratedOnce)
+    return;
 
   stepgen.enable();
   stallDetected = false;
-  
+
   tuneMinRad = minDeg * DEG_TO_RAD;
   tuneMaxRad = maxDeg * DEG_TO_RAD;
 
@@ -173,7 +185,7 @@ static void onAutoTune(const CanCmdBus::CmdFrame &f)
 
   cfg.maxRPS = tuneCurrentRPS;
   cfg.maxRPS2 = tuneCurrentRPS2;
-  
+
   tuneState = TUNE_PREP;
 }
 
@@ -195,7 +207,7 @@ static void onHoming(const CanCmdBus::CmdFrame &f)
     return;
   tuneState = TUNE_IDLE;
   stepgen.enable();
-  
+
   stallDetected = false;
   lastMoveTimestamp = millis();
   lastStallCheckAngle = encoder.angle(Encoder::Radians);
@@ -209,14 +221,13 @@ static void onHoming(const CanCmdBus::CmdFrame &f)
   memcpy(&hw, f.payload, sizeof(HomingWire));
 
   HomingConfig hcfg{
-      static_cast<uint8_t>(PIN_HOM_IN1), 
-      static_cast<uint8_t>(PIN_HOM_IN2), 
-      (hw.activeLow != 0),               
-      (hw.activeLow != 0),               
-      hw.speed,                          
-      30000u,                            
-      hw.offset                          
-  };
+      static_cast<uint8_t>(PIN_HOM_IN1),
+      static_cast<uint8_t>(PIN_HOM_IN2),
+      (hw.activeLow != 0),
+      (hw.activeLow != 0),
+      hw.speed,
+      30000u,
+      hw.offset};
   homing.begin(hcfg);
 
   const bool useMIN = (hw.useMINTrigger != 0);
@@ -335,7 +346,7 @@ static void onStealthChop(const CanCmdBus::CmdFrame &f)
 
 static void onEnabled(const CanCmdBus::CmdFrame &f)
 {
-  tuneState = TUNE_IDLE; 
+  tuneState = TUNE_IDLE;
   bool en;
   if (!readBool01(f.payload, f.len, 0, en))
     return;
@@ -343,7 +354,7 @@ static void onEnabled(const CanCmdBus::CmdFrame &f)
   if (en)
   {
     stepgen.enable();
-    stallDetected = false; 
+    stallDetected = false;
     lastMoveTimestamp = millis();
     lastStallCheckAngle = encoder.angle(Encoder::Radians);
   }
@@ -423,7 +434,7 @@ static void onUnits(const CanCmdBus::CmdFrame &f)
   if (!CanCmdBus::readU8(f.payload, f.len, 0, u))
     return;
 
-  cfg.units = (u != 0) ? 1 : 0; 
+  cfg.units = (u != 0) ? 1 : 0;
   cfgStore.save(cfg);
 }
 
@@ -450,37 +461,53 @@ static void onDirInvert(const CanCmdBus::CmdFrame &f)
 }
 
 // -----------------------------------------------------------------------------
-// Auto Tuning Logic
+// Auto Tuning Logic (Updated with 3-Step Verification)
 // -----------------------------------------------------------------------------
 void processAutoTuning()
 {
-  if (tuneState == TUNE_IDLE) return;
+  static int verifyCount = 0;
+  static bool isVerifying = false;
+
+  if (tuneState == TUNE_IDLE)
+  {
+    isVerifying = false;
+    verifyCount = 0;
+    return;
+  }
 
   if (tuneState == TUNE_DONE)
   {
-      if (millis() - tuneDoneTimestamp > 3000) 
-      {
-          tuneState = TUNE_IDLE;
-          stallDetected = false; // clear stall after viewing period
-      }
-      return;
+    if (millis() - tuneDoneTimestamp > 3000)
+    {
+      tuneState = TUNE_IDLE;
+      stallDetected = false;
+      isVerifying = false;
+      verifyCount = 0;
+    }
+    return;
   }
 
   if (stallDetected)
   {
-     stepgen.stop();
+    stepgen.stop();
+    stallDetected = false;
 
-     // Revert to previous safe values
-     float safeRPS = (tuneCurrentRPS > TUNE_START_RPS) ? (tuneCurrentRPS - TUNE_INC_RPS) : TUNE_START_RPS;
-     float safeRPS2 = (tuneCurrentRPS2 > TUNE_START_RPS2) ? (tuneCurrentRPS2 - TUNE_INC_RPS2) : TUNE_START_RPS2;
+    if (tuneCurrentRPS > TUNE_START_RPS)
+    {
+      tuneCurrentRPS -= TUNE_INC_RPS;
+      tuneCurrentRPS2 -= TUNE_INC_RPS2;
+    }
+    else
+    {
+      tuneCurrentRPS = TUNE_START_RPS;
+      tuneCurrentRPS2 = TUNE_START_RPS2;
+    }
 
-     cfg.maxRPS = safeRPS;
-     cfg.maxRPS2 = safeRPS2;
-     cfgStore.save(cfg);
+    isVerifying = true;
+    verifyCount = 0;
 
-     tuneState = TUNE_DONE;
-     tuneDoneTimestamp = millis();
-     return;
+    tuneState = TUNE_PREP;
+    return;
   }
 
   float currentAng = encoder.angle(Encoder::Radians);
@@ -488,61 +515,89 @@ void processAutoTuning()
 
   switch (tuneState)
   {
-    case TUNE_PREP:
-      axis.setTargetAngleRad(tuneMinRad);
-      
+  case TUNE_PREP:
+    axis.setTargetAngleRad(tuneMinRad);
+
+    lastMoveTimestamp = millis();
+    lastStallCheckAngle = currentAng;
+
+    dist = abs(currentAng - tuneMinRad);
+    if (dist < 0.05f)
+    {
+      tuneState = TUNE_FWD;
+    }
+    break;
+
+  case TUNE_FWD:
+    cfg.maxRPS = tuneCurrentRPS;
+    cfg.maxRPS2 = tuneCurrentRPS2;
+
+    axis.setTargetAngleRad(tuneMaxRad);
+
+    dist = abs(currentAng - tuneMaxRad);
+    if (dist < 0.05f)
+    {
       lastMoveTimestamp = millis();
       lastStallCheckAngle = currentAng;
-      
-      dist = abs(currentAng - tuneMinRad);
-      if (dist < 0.05f) { 
-         tuneState = TUNE_FWD;
-      }
-      break;
+      tuneState = TUNE_BWD;
+    }
+    break;
 
-    case TUNE_FWD:
-      cfg.maxRPS = tuneCurrentRPS;
-      cfg.maxRPS2 = tuneCurrentRPS2;
-      
-      axis.setTargetAngleRad(tuneMaxRad);
-      
-      dist = abs(currentAng - tuneMaxRad);
-      if (dist < 0.05f) {
-        lastMoveTimestamp = millis();
-        lastStallCheckAngle = currentAng;
-        tuneState = TUNE_BWD;
-      }
-      break;
+  case TUNE_BWD:
+    axis.setTargetAngleRad(tuneMinRad);
 
-    case TUNE_BWD:
-      axis.setTargetAngleRad(tuneMinRad);
-      
-      dist = abs(currentAng - tuneMinRad);
-      if (dist < 0.05f) {
-        tuneState = TUNE_INCREASE;
-      }
-      break;
+    dist = abs(currentAng - tuneMinRad);
+    if (dist < 0.05f)
+    {
+      tuneState = TUNE_INCREASE;
+    }
+    break;
 
-    case TUNE_INCREASE:
+  case TUNE_INCREASE:
+
+    if (isVerifying)
+    {
+      verifyCount++;
+
+      if (verifyCount >= 3)
+      {
+        cfg.maxRPS = tuneCurrentRPS;
+        cfg.maxRPS2 = tuneCurrentRPS2;
+        cfgStore.save(cfg);
+
+        tuneState = TUNE_DONE;
+        tuneDoneTimestamp = millis();
+      }
+      else
+      {
+        tuneState = TUNE_FWD;
+      }
+    }
+    else
+    {
       tuneCurrentRPS += TUNE_INC_RPS;
       tuneCurrentRPS2 += TUNE_INC_RPS2;
-      
-      if (tuneCurrentRPS > 40.0f) {
-         tuneCurrentRPS = 40.0f;
-         cfg.maxRPS = tuneCurrentRPS;
-         cfg.maxRPS2 = tuneCurrentRPS2;
-         cfgStore.save(cfg);
-         tuneState = TUNE_DONE;
-         tuneDoneTimestamp = millis();
-      } else {
-         lastMoveTimestamp = millis();
-         lastStallCheckAngle = currentAng;
-         tuneState = TUNE_FWD;
+
+      if (tuneCurrentRPS > 60.0f)
+      {
+        tuneCurrentRPS = 60.0f;
+        cfg.maxRPS = tuneCurrentRPS;
+        cfg.maxRPS2 = tuneCurrentRPS2;
+        cfgStore.save(cfg);
+        tuneState = TUNE_DONE;
+        tuneDoneTimestamp = millis();
       }
-      break;
-      
-    default:
-      break;
+      else
+      {
+        lastMoveTimestamp = millis();
+        lastStallCheckAngle = currentAng;
+        tuneState = TUNE_FWD;
+      }
+    }
+    break;
+
+  default:
+    break;
   }
 }
 
@@ -558,8 +613,8 @@ static void sendData()
     float currentAngle;
     float targetAngle;
     float temperature;
-    bool stalled;        // Moved here
-    uint8_t tuneState;   // Replaces bool tuning
+    bool stalled;      // Moved here
+    uint8_t tuneState; // Replaces bool tuning
     bool minTriggered;
     bool maxTriggered;
   };
@@ -571,8 +626,8 @@ static void sendData()
   pkt.currentAngle = encoder.angle(useDeg ? Encoder::Degrees : Encoder::Radians);
   pkt.targetAngle = axis.targetAngleRad() * (useDeg ? RAD_TO_DEG : 1.0);
   pkt.temperature = sensors.temperatureC();
-  pkt.stalled = stallDetected; 
-  pkt.tuneState = static_cast<uint8_t>(tuneState); 
+  pkt.stalled = stallDetected;
+  pkt.tuneState = static_cast<uint8_t>(tuneState);
   pkt.minTriggered = homing.minTriggered();
   pkt.maxTriggered = homing.maxTriggered();
   pkt.config = toWire(cfg);
@@ -658,11 +713,11 @@ void setup()
   axis.attachExternal(extPins);
   axis.setExternalMode(cfg.externalMode);
   axis.setTargetAngleRad(0);
-  
+
   stallDetected = false;
   lastMoveTimestamp = millis();
   lastStallCheckAngle = encoder.angle(Encoder::Radians);
-  
+
   delay(100);
 }
 
@@ -679,37 +734,37 @@ void loop()
   // ---------------------------------------------------------
   if (!stallDetected && cfg.calibratedOnce)
   {
-      float currentAng = encoder.angle(Encoder::Radians);
-      float targetAng = axis.targetAngleRad();
-      float error = abs(targetAng - currentAng);
+    float currentAng = encoder.angle(Encoder::Radians);
+    float targetAng = axis.targetAngleRad();
+    float error = abs(targetAng - currentAng);
 
-      if (error < STALL_THRESHOLD_RAD)
-      {
-          lastMoveTimestamp = now;
-          lastStallCheckAngle = currentAng;
-      }
-      else
-      {
-          float deltaAngle = abs(currentAng - lastStallCheckAngle);
+    if (error < STALL_THRESHOLD_RAD)
+    {
+      lastMoveTimestamp = now;
+      lastStallCheckAngle = currentAng;
+    }
+    else
+    {
+      float deltaAngle = abs(currentAng - lastStallCheckAngle);
 
-          if (deltaAngle > STALL_THRESHOLD_RAD)
-          {
-              lastMoveTimestamp = now;
-              lastStallCheckAngle = currentAng;
-          }
-          else if ((now - lastMoveTimestamp) > 1000)
-          {
-              stallDetected = true;
-              
-              axis.setTargetAngleRad(currentAng);
-              stepgen.stop(); 
-          }
+      if (deltaAngle > STALL_THRESHOLD_RAD)
+      {
+        lastMoveTimestamp = now;
+        lastStallCheckAngle = currentAng;
       }
+      else if ((now - lastMoveTimestamp) > 1000)
+      {
+        stallDetected = true;
+
+        axis.setTargetAngleRad(currentAng);
+        stepgen.stop();
+      }
+    }
   }
 
   if (cfg.calibratedOnce && !overTemperatureProtection() && !stallDetected)
     axis.update(g_dtSec);
-    
+
   sensors.update();
   homing.update();
 
@@ -749,7 +804,7 @@ void loop()
     stepgen.stop();
   }
 
-  if ((now % 2) == 0) 
+  if ((now % 2) == 0)
   {
     sendData();
   }
