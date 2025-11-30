@@ -338,7 +338,7 @@ static void onStealthChop(const CanCmdBus::CmdFrame &f)
   tmc.toff = 5;
   tmc.blank = 24;
   tmc.stealth = cfg.stealthChop;
-  tmc.spreadSwitchRPS = 8.0;
+  tmc.spreadSwitchRPS = 5.0;
   axis.configureDriver(tmc);
 
   cfgStore.save(cfg);
@@ -703,7 +703,7 @@ void setup()
   tmc.toff = 5;
   tmc.blank = 24;
   tmc.stealth = cfg.stealthChop;
-  tmc.spreadSwitchRPS = 8.0;
+  tmc.spreadSwitchRPS = 5.0;
   axis.configureDriver(tmc);
 
   axis.setFullSteps(cfg.stepsPerRev);

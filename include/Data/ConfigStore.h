@@ -17,10 +17,10 @@ struct AxisConfig {
   bool     externalSPI = false;
   bool     calibratedOnce = false;
   uint16_t encZeroCounts = 0;
-  uint16_t driver_mA = 1200;
-  float    maxRPS = 25.0f;
-  float    maxRPS2 = 1500.0f;
-  float    Kp = 1.0f;
+  uint16_t driver_mA = 1500;
+  float    maxRPS = 10.0f;
+  float    maxRPS2 = 100.0f;
+  float    Kp = 2.0f;
   float    Ki = 0.0f;
   float    Kd = 0.0f;
   uint16_t canArbId = 0x001;

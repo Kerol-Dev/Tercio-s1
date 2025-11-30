@@ -52,11 +52,15 @@ void AxisController::configureDriver(const TmcConfig &c)
 {
   _tmc.begin();
   _tmc.shaft(false);
-  _tmc.toff(c.toff);
-  _tmc.blank_time(c.blank);
+
+  _tmc.intpol(true);
+  _tmc.toff(4);
+  _tmc.blank_time(1);
   _tmc.rms_current(c.mA);
   _tmc.pwm_autoscale(true);
-  _tmc.intpol(true);
+  _tmc.pwm_freq(1);
+  _tmc.pwm_grad(1);
+
   _tmc.vsense(false);
 
   if (c.stealth)
@@ -66,7 +70,7 @@ void AxisController::configureDriver(const TmcConfig &c)
   }
   else
   {
-    _tmc.en_spreadCycle(true);
+    _tmc.en_spreadCycle(true); 
   }
 
   setMicrosteps(_cfg.microsteps);
@@ -85,6 +89,8 @@ void AxisController::setMicrosteps(uint16_t micro)
   _ustepAngleRad = (2.0 * PI) / static_cast<double>(_cfg.stepsPerRev * _cfg.microsteps);
 
   _tmc.microsteps(_cfg.microsteps);
+
+  _tmc.intpol(true);
 
   setSpreadSwitchRPS(_spreadSwitchRPS);
 }
@@ -209,15 +215,22 @@ void AxisController::setSpreadSwitchRPS(double rps)
 {
   _spreadSwitchRPS = (rps > 0.0) ? rps : 0.1;
 
-  // TMC2209 TPWMTHRS calculation
-  static constexpr uint32_t fclk = 12000000UL; // internal clock
-  const double usteps_per_rev = static_cast<double>(_cfg.stepsPerRev) * static_cast<double>(_cfg.microsteps);
-  const double f_step = _spreadSwitchRPS * usteps_per_rev; // microsteps per second
-  uint32_t tpwm = (f_step > 0.0)
-                      ? static_cast<uint32_t>(std::lround(static_cast<double>(fclk) / f_step))
-                      : 0xFFFFF;
+  // TMC2209 internal clock is nominally 12MHz
+  static constexpr uint32_t fclk = 12000000UL;
 
-  tpwm = std::clamp<uint32_t>(tpwm, 1, 0xFFFFF);
+  // 1. Calculate the step frequency at the transition RPS
+  // Formula: f_step = RPS * StepsPerRev * Microsteps
+  const double usteps_per_rev = static_cast<double>(_cfg.stepsPerRev) * static_cast<double>(_cfg.microsteps);
+  const double f_step = _spreadSwitchRPS * usteps_per_rev;
+
+  uint32_t tpwm = 0xFFFFF;
+
+  if (f_step > 1.0)
+  {
+    const double calc = static_cast<double>(fclk) / f_step;
+    tpwm = static_cast<uint32_t>(std::lround(calc));
+  }
+
   _tmc.TPWMTHRS(tpwm);
 }
 
