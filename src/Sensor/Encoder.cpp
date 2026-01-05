@@ -4,17 +4,19 @@
 #include <math.h>
 
 Encoder::Encoder(uint16_t cpr)
-: _as(), _as5048a(PB2, false), _cpr(cpr), _useAS5600(true) {}
+    : _as(), _as5048a(PB2, false), _cpr(cpr), _useAS5600(true) {}
 
-bool Encoder::begin(uint8_t SDA, uint8_t SCL, bool useAS5600, uint8_t as5048_cs) {
+bool Encoder::begin(uint8_t SDA, uint8_t SCL, bool useAS5600, uint8_t as5048_cs)
+{
   _useAS5600 = useAS5600;
   _as5048_cs = as5048_cs;
 
   // I2C for AS5600
   Wire.setSDA(SDA);
   Wire.setSCL(SCL);
-  Wire.setClock(400000);
   Wire.begin();
+  Wire.setClock(400000);
+  Wire.setTimeout(10);
 
   // SPI for AS5048A
   SPI.setMISO(PA6);
@@ -25,41 +27,110 @@ bool Encoder::begin(uint8_t SDA, uint8_t SCL, bool useAS5600, uint8_t as5048_cs)
   _as5048a = AS5048A(_as5048_cs, false);
 
   // Only init what we need
-  if (_useAS5600) {
-    if (!_as.begin()) return false;
-  } else {
+  if (_useAS5600)
+  {
+    if (!_as.begin())
+      return false;
+  }
+  else
+  {
     _as5048a.begin();
   }
 
   _lastRaw = _useAS5600 ? _as.readAngle() : _as5048a.getRawRotation();
-  _cont    = 0;
-  _velCps  = 0.0;
+  _cont = 0;
+  _velCps = 0.0;
   return true;
 }
 
-void Encoder::calibrateZero() {
+static void i2cRecover(uint8_t sda, uint8_t scl)
+{
+  // Release lines
+  pinMode(sda, INPUT_PULLUP);
+  pinMode(scl, OUTPUT_OPEN_DRAIN);
+  digitalWrite(scl, HIGH);
+  delayMicroseconds(5);
+
+  // Clock out 9 pulses
+  for (int i = 0; i < 9; i++)
+  {
+    digitalWrite(scl, LOW);
+    delayMicroseconds(5);
+    digitalWrite(scl, HIGH);
+    delayMicroseconds(5);
+  }
+
+  // STOP condition
+  pinMode(sda, OUTPUT_OPEN_DRAIN);
+  digitalWrite(sda, LOW);
+  delayMicroseconds(5);
+  digitalWrite(scl, HIGH);
+  delayMicroseconds(5);
+  digitalWrite(sda, HIGH);
+  delayMicroseconds(5);
+
+  pinMode(sda, INPUT_PULLUP);
+}
+
+void Encoder::calibrateZero()
+{
   _lastRaw = _useAS5600 ? _as.readAngle() : _as5048a.getRawRotation();
-  _cont    = 0;
-  _velCps  = 0.0;
+  _cont = 0;
+  _velCps = 0.0;
 }
 
 void Encoder::setInvert(bool inv) { _invert = inv; }
 
-void Encoder::setVelAlpha(float a) {
-  if (a < 0.0f) a = 0.0f;
-  if (a > 1.0f) a = 1.0f;
+void Encoder::setVelAlpha(float a)
+{
+  if (a < 0.0f)
+    a = 0.0f;
+  if (a > 1.0f)
+    a = 1.0f;
   _alpha = a;
 }
 
-void Encoder::update(double dt_s) {
-  if (dt_s <= 0.0) return;
+void Encoder::update(double dt_s)
+{
+  if (dt_s <= 0.0)
+    return;
 
-  const uint16_t raw = _useAS5600 ? _as.readAngle() : _as5048a.getRawRotation();
+  static uint8_t failCount = 0;
+
+  uint16_t raw;
+  if (_useAS5600)
+  {
+    raw = _as.readAngle(); // relies on Wire timeout to avoid hard hang
+    // Optional sanity: AS5600 is 12-bit, reject out-of-range
+    if (raw > 4095)
+    {
+      failCount++;
+      if (failCount >= 3)
+      {
+        i2cRecover(/*sda*/ Wire.sda(), /*scl*/ Wire.scl()); // if your core supports these accessors
+        // If not, store SDA/SCL pins in members and use them here.
+        Wire.end();
+        Wire.begin();
+        Wire.setClock(400000);
+        Wire.setTimeout(10);
+        failCount = 0;
+      }
+      return;
+    }
+  }
+  else
+  {
+    raw = _as5048a.getRawRotation();
+  }
+
+  failCount = 0;
 
   int16_t diff = static_cast<int16_t>(raw - _lastRaw);
   const int16_t half = static_cast<int16_t>(_cpr / 2);
-  if (diff >  half) diff -= _cpr;
-  if (diff < -half) diff += _cpr;
+  if (diff > half)
+    diff -= _cpr;
+  if (diff < -half)
+    diff += _cpr;
 
   _lastRaw = raw;
 
@@ -70,32 +141,43 @@ void Encoder::update(double dt_s) {
   _velCps = (1.0 - _alpha) * _velCps + _alpha * inst_cps;
 }
 
-double Encoder::angle(Units u) const {
+double Encoder::angle(Units u) const
+{
   const double s = _invert ? -1.0 : 1.0;
-  switch (u) {
-    case Degrees:   return s * _cont * (360.0 / _cpr);
-    case Radians:   return s * _cont * (2.0 * M_PI / _cpr);
-    case Rotations: return s * static_cast<double>(_cont) / _cpr;
+  switch (u)
+  {
+  case Degrees:
+    return s * _cont * (360.0 / _cpr);
+  case Radians:
+    return s * _cont * (2.0 * M_PI / _cpr);
+  case Rotations:
+    return s * static_cast<double>(_cont) / _cpr;
   }
   return 0.0;
 }
 
-double Encoder::velocity(Units u) const {
+double Encoder::velocity(Units u) const
+{
   const double s = _invert ? -1.0 : 1.0;
-  switch (u) {
-    case Degrees:   return s * _velCps * (360.0 / _cpr);
-    case Radians:   return s * _velCps * (2.0 * M_PI / _cpr);
-    case Rotations: return s * _velCps / _cpr;
+  switch (u)
+  {
+  case Degrees:
+    return s * _velCps * (360.0 / _cpr);
+  case Radians:
+    return s * _velCps * (2.0 * M_PI / _cpr);
+  case Rotations:
+    return s * _velCps / _cpr;
   }
   return 0.0;
 }
 
-bool Encoder::magnetPresent() {
+bool Encoder::magnetPresent()
+{
   return _useAS5600 ? _as.detectMagnet() : true; // AS5048A has no equivalent
 }
-bool Encoder::magnetTooWeak()   { return _useAS5600 ? _as.magnetTooWeak()   : false; }
+bool Encoder::magnetTooWeak() { return _useAS5600 ? _as.magnetTooWeak() : false; }
 bool Encoder::magnetTooStrong() { return _useAS5600 ? _as.magnetTooStrong() : false; }
-bool Encoder::magnetWrong()     { return _useAS5600 ? (!magnetPresent() || magnetTooWeak() || magnetTooStrong()) : false; }
+bool Encoder::magnetWrong() { return _useAS5600 ? (!magnetPresent() || magnetTooWeak() || magnetTooStrong()) : false; }
 
 uint16_t Encoder::rawCounts() { return _useAS5600 ? _as.readAngle() : _as5048a.getRawRotation(); }
 uint16_t Encoder::cpr() const { return _cpr; }

@@ -40,6 +40,10 @@ void StepperControl::begin() {
 void StepperControl::enable()  { digitalWrite(_enPin, LOW);  }
 void StepperControl::disable() { digitalWrite(_enPin, HIGH); }
 
+bool StepperControl::getEnabled() {
+  return digitalRead(_enPin) == LOW;
+}
+
 void StepperControl::setDir(bool cw) {
   digitalWrite(_dirPin, cw ? HIGH : LOW);
 }

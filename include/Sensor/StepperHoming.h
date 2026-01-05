@@ -7,6 +7,8 @@
 struct HomingConfig {
   uint8_t inMinPin;       // IN1 pin
   uint8_t inMaxPin;       // IN2 pin
+  bool sensorlessHoming;
+  float currentLimit;
   bool minActiveLow;      // true = active low, false = active high
   bool maxActiveLow;
   float seekSpeed;        // units/sec toward limit
@@ -18,6 +20,7 @@ class StepperHoming {
 public:
   using SetVelFn = std::function<void(float)>;  // set velocity
   using StopFn   = std::function<void(void)>;   // stop motor
+  using StallFn  = std::function<bool()>;
   using ReadFn   = std::function<double(void)>;  // read position
   using SetFn    = std::function<void(float)>;  // set position
 
@@ -25,7 +28,7 @@ public:
   bool begin(const HomingConfig& cfg);
 
   // Perform homing. Returns true if successful.
-  bool home(SetVelFn setVel, StopFn stop, Encoder enc, AxisController con, AxisConfig &axisCfg, SetFn setZero, bool seekToMin);
+  bool home(SetVelFn setVel, StopFn stop, StallFn stallDetected, Encoder enc, AxisController con, AxisConfig &axisCfg, SetFn setZero, bool seekToMin);
 
   // Check raw state
   bool minTriggered() const { return _minTrig; }

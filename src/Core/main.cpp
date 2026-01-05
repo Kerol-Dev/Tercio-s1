@@ -4,7 +4,6 @@
 #include <Arduino.h>
 #include <AS5600.h>
 #include <TMCStepper.h>
-
 #include "Encoder.h"
 #include "StepperControl.h"
 #include "AxisController.h"
@@ -87,7 +86,10 @@ bool stallDetected = false;
 unsigned long lastMoveTimestamp = 0;
 float lastStallCheckAngle = 0.0f;
 
-const float STALL_THRESHOLD_RAD = 1.0f * DEG_TO_RAD;
+bool motorRecentlyEnabled = false;
+unsigned long motorEnableTimestamp = 0;
+
+const float STALL_THRESHOLD_RAD = 2.0f * DEG_TO_RAD;
 
 // -----------------------------------------------------------------------------
 // Auto-Tuning Variables
@@ -120,13 +122,15 @@ const float TUNE_INC_RPS2 = 8.0f;
 struct HomingWire
 {
   uint8_t useMINTrigger; // 0/1
-  float offset;          // device units (deg/rad per cfg.units)
-  uint8_t activeLow;     // 0/1
-  float speed;           // rps
-  uint8_t direction;     // 0=negative, 1=positive
+  uint8_t sensorlessHoming;
+  uint16_t homingCurrent;
+  float offset;      // device units (deg/rad per cfg.units)
+  uint8_t activeLow; // 0/1
+  float speed;       // rps
+  uint8_t direction; // 0=negative, 1=positive
 };
 #pragma pack(pop)
-static_assert(sizeof(HomingWire) == 11, "HomingWire must be 11 bytes");
+static_assert(sizeof(HomingWire) == 14, "HomingWire must be 14 bytes");
 
 // -----------------------------------------------------------------------------
 // Helpers
@@ -139,6 +143,8 @@ static inline bool readBool01(const uint8_t *p, uint8_t len, uint8_t off, bool &
   out = (v != 0);
   return true;
 }
+
+static bool stallDetectionLogic();
 
 // -----------------------------------------------------------------------------
 // Handlers
@@ -201,6 +207,7 @@ static void onCurrentMA(const CanCmdBus::CmdFrame &f)
   cfgStore.save(cfg);
 }
 
+bool oldCurrent = 0;
 static void onHoming(const CanCmdBus::CmdFrame &f)
 {
   if (!cfg.calibratedOnce)
@@ -223,12 +230,20 @@ static void onHoming(const CanCmdBus::CmdFrame &f)
   HomingConfig hcfg{
       static_cast<uint8_t>(PIN_HOM_IN1),
       static_cast<uint8_t>(PIN_HOM_IN2),
+      (hw.sensorlessHoming != 0),
+      static_cast<float>(hw.homingCurrent),
       (hw.activeLow != 0),
       (hw.activeLow != 0),
       hw.speed,
       30000u,
       hw.offset};
+
   homing.begin(hcfg);
+
+  oldCurrent = cfg.driver_mA;
+  float ma = (hw.homingCurrent < 50) ? 50 : (hw.homingCurrent > 2000 ? 2000 : hw.homingCurrent);
+  cfg.driver_mA = ma;
+  driver.rms_current(ma);
 
   const bool useMIN = (hw.useMINTrigger != 0);
   const bool dirPos = (hw.direction != 0);
@@ -242,6 +257,8 @@ static void onHoming(const CanCmdBus::CmdFrame &f)
       },
       [&]()
       { stepgen.stop(); },
+      [&]()
+      { return stallDetectionLogic(); },
       encoder,
       axis,
       cfg,
@@ -357,6 +374,8 @@ static void onEnabled(const CanCmdBus::CmdFrame &f)
     stallDetected = false;
     lastMoveTimestamp = millis();
     lastStallCheckAngle = encoder.angle(Encoder::Radians);
+    motorRecentlyEnabled = true;
+    motorEnableTimestamp = millis();
   }
   else
   {
@@ -490,6 +509,7 @@ void processAutoTuning()
   if (stallDetected)
   {
     stepgen.stop();
+    axis.setTargetAngleRad(encoder.angle(Encoder::Radians));
     stallDetected = false;
 
     if (tuneCurrentRPS > TUNE_START_RPS)
@@ -682,6 +702,8 @@ void setup()
   HomingConfig hcfg{
       static_cast<uint8_t>(PIN_HOM_IN1),
       static_cast<uint8_t>(PIN_HOM_IN2),
+      false,
+      1000.0f,
       true,
       true,
       0,
@@ -721,18 +743,18 @@ void setup()
   delay(100);
 }
 
-void loop()
+bool stallDetectionLogic()
 {
   const unsigned long now = millis();
-  g_dtSec = (now - g_lastMs) * 0.001f;
-  g_lastMs = now;
 
-  processAutoTuning();
-
-  // ---------------------------------------------------------
-  // STALL DETECTION LOGIC
-  // ---------------------------------------------------------
-  if (!stallDetected && cfg.calibratedOnce)
+  if (motorRecentlyEnabled)
+  {
+    if (now - motorEnableTimestamp > 500)
+    {
+      motorRecentlyEnabled = false;
+    }
+  }
+  if (!stallDetected && cfg.calibratedOnce && stepgen.getEnabled() && !motorRecentlyEnabled)
   {
     float currentAng = encoder.angle(Encoder::Radians);
     float targetAng = axis.targetAngleRad();
@@ -752,14 +774,27 @@ void loop()
         lastMoveTimestamp = now;
         lastStallCheckAngle = currentAng;
       }
-      else if ((now - lastMoveTimestamp) > 1000)
+      else if ((now - lastMoveTimestamp) > 500)
       {
         stallDetected = true;
-
-        axis.setTargetAngleRad(currentAng);
-        stepgen.stop();
       }
     }
+  }
+  return stallDetected;
+}
+void loop()
+{
+  const unsigned long now = millis();
+  g_dtSec = (now - g_lastMs) * 0.001f;
+  g_lastMs = now;
+
+  processAutoTuning();
+  stallDetectionLogic();
+
+  if (stallDetected)
+  {
+    axis.setTargetAngleRad(encoder.angle(Encoder::Radians));
+    stepgen.stop();
   }
 
   if (cfg.calibratedOnce && !overTemperatureProtection() && !stallDetected)
@@ -804,10 +839,13 @@ void loop()
     stepgen.stop();
   }
 
-  if ((now % 2) == 0)
+  static uint32_t lastTx = 0;
+  if (millis() - lastTx >= 10)
   {
+    lastTx = millis();
     sendData();
   }
+
   CanCmdBus::poll();
   delay(5);
 }

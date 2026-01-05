@@ -185,8 +185,6 @@ namespace CanCmdBus
       uint8_t minL = 0, maxL = 0;
       if (!cmd_len_bounds(cmd, minL, maxL))
         continue; // unknown cmd
-      // if (payLen < minL || payLen > maxL)
-      //   continue; // malformed len
 
       const uint8_t idx = findIndex(cmd);
       if (idx == 0xFF || s_table[idx].fn == nullptr)
@@ -206,7 +204,6 @@ namespace CanCmdBus
       cf.payload = payLen ? payloadCopy : nullptr;
       cf.len = payLen;
 
-#if defined(__cpp_exceptions)
       try
       {
         s_table[idx].fn(cf);
@@ -214,9 +211,6 @@ namespace CanCmdBus
       catch (...)
       {
       }
-#else
-      s_table[idx].fn(cf);
-#endif
     }
   }
 
@@ -324,5 +318,4 @@ namespace CanCmdBus
       n = 63;
     return send(id, cmd, p, static_cast<uint8_t>(n));
   }
-
 }
