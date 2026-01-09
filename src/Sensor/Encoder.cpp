@@ -107,7 +107,7 @@ void Encoder::update(double dt_s)
       failCount++;
       if (failCount >= 3)
       {
-        i2cRecover(/*sda*/ Wire.sda(), /*scl*/ Wire.scl()); // if your core supports these accessors
+        i2cRecover(SDA, SCL); // if your core supports these accessors
         // If not, store SDA/SCL pins in members and use them here.
         Wire.end();
         Wire.begin();

@@ -121,7 +121,9 @@ class ImuState:
 
 @dataclass
 class HomingParams:
-    useMINTrigger: bool = True
+    useIN1Trigger: bool = True
+    sensorlessHoming: bool = False
+    homingCurrent: int = 1200
     offset: float = 0.0
     activeLow: bool = True
     speed: float = 1.0
@@ -136,13 +138,22 @@ _b01 = lambda b: struct.pack("<B", 1 if b else 0)
 
 
 def _pack_homing(p: HomingParams) -> bytes:
+    cur = int(p.homingCurrent)
+    if cur < 0: cur = 0
+    if cur > 0xFFFF: cur = 0xFFFF
+
+    use_in1 = 1 if (p.useMINTrigger and not p.sensorlessHoming) else 0
+    active_low = 1 if (p.activeLow and not p.sensorlessHoming) else 0
+
     return struct.pack(
-        "<B f B f B",
-        1 if p.useMINTrigger else 0,
-        float(p.offset),
-        1 if p.activeLow else 0,
-        float(p.speed),
-        1 if p.direction else 0,
+        "<BBHfBfB",
+        use_in1,                          
+        1 if p.sensorlessHoming else 0,  
+        cur,                             
+        float(p.offset),                 
+        active_low,                      
+        float(p.speed),                  
+        1 if p.direction else 0,          
     )
 
 

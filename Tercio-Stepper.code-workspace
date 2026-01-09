@@ -10,6 +10,9 @@
 		},
 		{
 			"path": "../Tercio-imu"
+		},
+		{
+			"path": "../Web_Server"
 		}
 	],
 	"settings": {
