@@ -7,7 +7,7 @@
 
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Documentation](https://img.shields.io/badge/Docs-terciolabs.com-green)](https://docs.terciolabs.com)
-[![Hardware](https://img.shields.io/badge/Hardware-TercioLabs-black)](https://terciolabs.com)
+[![Hardware](https://img.shields.io/badge/Hardware-TercioLabs-orange)](https://terciolabs.com)
 
 </div>
 
