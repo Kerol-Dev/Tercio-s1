@@ -9,7 +9,7 @@ struct HomingConfig {
   uint8_t inMaxPin;       // IN2 pin
   bool sensorlessHoming;
   float currentLimit;
-  bool minActiveLow;      // true = active low, false = active high
+  bool minActiveLow;
   bool maxActiveLow;
   float seekSpeed;        // units/sec toward limit
   uint32_t timeoutMs;     // safety timeout

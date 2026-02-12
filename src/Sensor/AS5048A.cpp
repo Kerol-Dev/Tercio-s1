@@ -1,347 +1,298 @@
 #include "Arduino.h"
-
 #include <AS5048A.h>
 
-static const uint16_t AS5048A_CLEAR_ERROR_FLAG = 0x0001;
-static const uint16_t AS5048A_PROGRAMMING_CONTROL = 0x0003;
-static const uint16_t AS5048A_OTP_REGISTER_ZERO_POS_HIGH = 0x0016;
-static const uint16_t AS5048A_OTP_REGISTER_ZERO_POS_LOW = 0x0017;
-static const uint16_t AS5048A_DIAG_AGC = 0x3FFD;
-static const uint16_t AS5048A_MAGNITUDE = 0x3FFE;
-static const uint16_t AS5048A_ANGLE = 0x3FFF;
 
-static const uint8_t AS5048A_AGC_FLAG = 0xFF;
-static const uint8_t AS5048A_ERROR_PARITY_FLAG = 0x04;
-static const uint8_t AS5048A_ERROR_COMMAND_INVALID_FLAG = 0x02;
-static const uint8_t AS5048A_ERROR_FRAMING_FLAG = 0x01;
+// -----------------------------------------------------------------------------
+// Constants and Register Definitions
+// -----------------------------------------------------------------------------
+namespace Registers
+{
+  constexpr uint16_t CLEAR_ERROR_FLAG        = 0x0001;
+  constexpr uint16_t PROGRAMMING_CONTROL     = 0x0003;
+  constexpr uint16_t OTP_ZERO_POS_HIGH       = 0x0016;
+  constexpr uint16_t OTP_ZERO_POS_LOW        = 0x0017;
+  constexpr uint16_t DIAG_AGC                = 0x3FFD;
+  constexpr uint16_t MAGNITUDE               = 0x3FFE;
+  constexpr uint16_t ANGLE                   = 0x3FFF;
+}
 
-static const uint16_t AS5048A_DIAG_COMP_HIGH = 0x2000;
-static const uint16_t AS5048A_DIAG_COMP_LOW = 0x1000;
-static const uint16_t AS5048A_DIAG_COF = 0x0800;
-static const uint16_t AS5048A_DIAG_OCF = 0x0400;
+namespace Flags
+{
+  // Error Register Flags
+  constexpr uint8_t  ERROR_PARITY            = 0x04;
+  constexpr uint8_t  ERROR_COMMAND_INVALID   = 0x02;
+  constexpr uint8_t  ERROR_FRAMING           = 0x01;
 
-static const double AS5048A_MAX_VALUE = 8191.0;
+  // Diagnostic Register Flags
+  constexpr uint16_t DIAG_COMP_HIGH          = 0x2000;
+  constexpr uint16_t DIAG_COMP_LOW           = 0x1000;
+  constexpr uint16_t DIAG_COF                = 0x0800;
+  constexpr uint16_t DIAG_OCF                = 0x0400;
+  constexpr uint8_t  DIAG_AGC_MASK           = 0xFF;
+}
 
-AS5048A::AS5048A(byte cs, bool debug /*=false*/)
-	: _cs(cs), errorFlag(false), ocfFlag(false), position(0), debug(debug)
+static constexpr double MAX_VALUE = 8191.0;
+static constexpr uint16_t MASK_DATA = 0x3FFF; // Mask for 14-bit data
+
+
+// -----------------------------------------------------------------------------
+// AS5048A Implementation
+// -----------------------------------------------------------------------------
+
+AS5048A::AS5048A(byte cs, bool debug)
+    : _cs(cs),
+      errorFlag(false),
+      ocfFlag(false),
+      position(0),
+      debug(debug),
+      esp32_delay(0)
 {
 }
 
 void AS5048A::begin()
 {
-	setDelay();
-
-	this->settings = SPISettings(3000000, MSBFIRST, SPI_MODE1);
-
-	pinMode(this->_cs, OUTPUT);
-
-	SPI.begin();
+    setDelay();
+    this->settings = SPISettings(3000000, MSBFIRST, SPI_MODE1);
+    pinMode(this->_cs, OUTPUT);
+    SPI.begin();
 }
 
 void AS5048A::close()
 {
-	SPI.end();
+    SPI.end();
 }
 
 uint8_t AS5048A::spiCalcEvenParity(uint16_t value)
 {
-	uint8_t cnt = 0;
-
-	for (uint8_t i = 0; i < 16; i++)
-	{
-		if (value & 0x1)
-		{
-			cnt++;
-		}
-		value >>= 1;
-	}
-	return cnt & 0x1;
+    uint8_t count = 0;
+    for (uint8_t i = 0; i < 16; i++)
+    {
+        if (value & 0x1)
+            count++;
+        value >>= 1;
+    }
+    return count & 0x1;
 }
 
-/**
- * Get the rotation of the sensor relative to the zero position.
- *
- * @return {int16_t} between -2^13 and 2^13
- */
 int16_t AS5048A::getRotation()
 {
-	uint16_t data;
-	int16_t rotation;
+    uint16_t data = AS5048A::getRawRotation();
+    int16_t rotation = static_cast<int16_t>(data) - static_cast<int16_t>(this->position);
+    
+    if (rotation > static_cast<int16_t>(MAX_VALUE))
+        rotation = -((MASK_DATA) - rotation); 
 
-	data = AS5048A::getRawRotation();
-	rotation = static_cast<int16_t>(data) - static_cast<int16_t>(this->position);
-	if (rotation > AS5048A_MAX_VALUE)
-		rotation = -((0x3FFF) - rotation); // more than -180
-
-	return rotation;
+    return rotation;
 }
 
-/**
- * Returns the raw angle directly from the sensor
- */
 int16_t AS5048A::getRawRotation()
 {
-	return AS5048A::read(AS5048A_ANGLE);
+    return AS5048A::read(Registers::ANGLE);
 }
-
-/**
- * Get the rotation of the sensor relative to the zero position in degrees.
- *
- * @return {double} between 0 and 360
- */
 
 double AS5048A::getRotationInDegrees()
 {
-	int16_t rotation = getRotation();
-	double degrees = 360.0 * (rotation + AS5048A_MAX_VALUE) / (AS5048A_MAX_VALUE * 2.0);
-	return degrees;
+    int16_t rotation = getRotation();
+    // Maps -8192..8191 to 0..360
+    double degrees = 360.0 * (rotation + MAX_VALUE) / (MAX_VALUE * 2.0);
+    return degrees;
 }
-
-/**
- * Get the rotation of the sensor relative to the zero position in radians.
- *
- * @return {double} between 0 and 2 * PI
- */
 
 double AS5048A::getRotationInRadians()
 {
-	int16_t rotation = getRotation();
-	double radians = PI * (rotation + AS5048A_MAX_VALUE) / AS5048A_MAX_VALUE;
-	return radians;
+    int16_t rotation = getRotation();
+    // Maps -8192..8191 to 0..2PI
+    double radians = PI * (rotation + MAX_VALUE) / MAX_VALUE;
+    return radians;
 }
 
-/**
- * returns the value of the state register
- * @return unsigned 16 bit integer containing flags
- */
 uint16_t AS5048A::getState()
 {
-	return AS5048A::read(AS5048A_DIAG_AGC);
+    return AS5048A::read(Registers::DIAG_AGC);
 }
 
-/**
- * Print the diagnostic register of the sensor
- */
 void AS5048A::printState()
 {
-	if (this->debug)
-	{
-		uint16_t data = AS5048A::getState();
-		if (AS5048A::error())
-		{
-			Serial.print("Error bit was set!");
-		}
-		Serial.println(data, BIN);
-	}
+    if (this->debug)
+    {
+        uint16_t data = AS5048A::getState();
+        if (AS5048A::error())
+        {
+            Serial.print("Error bit was set!");
+        }
+        Serial.println(data, BIN);
+    }
 }
 
-/**
- * Returns the value used for Automatic Gain Control (Part of diagnostic
- * register)
- */
 uint8_t AS5048A::getGain()
 {
-	uint16_t data = AS5048A::getState();
-	return static_cast<uint8_t>(data & AS5048A_AGC_FLAG);
+    uint16_t data = AS5048A::getState();
+    return static_cast<uint8_t>(data & Flags::DIAG_AGC_MASK);
 }
 
-/**
- * Get diagnostic
- */
 String AS5048A::getDiagnostic()
 {
-	uint16_t data = AS5048A::getState();
-	if (data & AS5048A_DIAG_COMP_HIGH)
-	{
-		return "COMP high";
-	}
-	if (data & AS5048A_DIAG_COMP_LOW)
-	{
-		return "COMP low";
-	}
-	if (data & AS5048A_DIAG_COF)
-	{
-		return "CORDIC overflow";
-	}
-	if (data & AS5048A_DIAG_OCF && ocfFlag == false)
-	{
-		ocfFlag = true;
-		return "Offset compensation finished";
-	}
-	return "";
+    uint16_t data = AS5048A::getState();
+    
+    if (data & Flags::DIAG_COMP_HIGH)
+        return "COMP high";
+    
+    if (data & Flags::DIAG_COMP_LOW)
+        return "COMP low";
+    
+    if (data & Flags::DIAG_COF)
+        return "CORDIC overflow";
+    
+    if ((data & Flags::DIAG_OCF) && !ocfFlag)
+    {
+        ocfFlag = true;
+        return "Offset compensation finished";
+    }
+    
+    return "";
 }
 
-/*
- * Get and clear the error register by reading it
- */
 String AS5048A::getErrors()
 {
-	uint16_t error = AS5048A::read(AS5048A_CLEAR_ERROR_FLAG);
-	if (error & AS5048A_ERROR_PARITY_FLAG)
-	{
-		return "Parity Error";
-	}
-	if (error & AS5048A_ERROR_COMMAND_INVALID_FLAG)
-	{
-		return "Command invalid";
-	}
-	if (error & AS5048A_ERROR_FRAMING_FLAG)
-	{
-		return "Framing error";
-	}
-	return "";
+    uint16_t error = AS5048A::read(Registers::CLEAR_ERROR_FLAG);
+    
+    if (error & Flags::ERROR_PARITY)
+        return "Parity Error";
+    
+    if (error & Flags::ERROR_COMMAND_INVALID)
+        return "Command invalid";
+    
+    if (error & Flags::ERROR_FRAMING)
+        return "Framing error";
+    
+    return "";
 }
 
-/*
- * Set the zero position
- */
 void AS5048A::setZeroPosition(uint16_t position)
 {
-	this->position = position % 0x3FFF;
+    this->position = position % MASK_DATA;
 }
 
-/*
- * Returns the current zero position
- */
 uint16_t AS5048A::getZeroPosition()
 {
-	return this->position;
+    return this->position;
 }
 
-/*
- * Check if an error has been encountered.
- */
 bool AS5048A::error()
 {
-	return this->errorFlag;
+    return this->errorFlag;
 }
 
-/*
- * Read a register from the sensor
- * Takes the address of the register as an unsigned 16 bit
- * Returns the value of the register
- */
 uint16_t AS5048A::read(uint16_t registerAddress)
 {
-	uint16_t command = 0x4000; // PAR=0 R/W=R
-	command = command | registerAddress;
+    uint16_t command = 0x4000; // Read command (Bit 14 set)
+    command |= registerAddress;
 
-	// Add a parity bit on the the MSB
-	command |= static_cast<uint16_t>(spiCalcEvenParity(command) << 0xF);
+    // Add parity bit (Bit 15)
+    if (spiCalcEvenParity(command))
+        command |= 0x8000;
 
-	if (this->debug)
-	{
-		Serial.print("Read (0x");
-		Serial.print(registerAddress, HEX);
-		Serial.print(") with command: 0b");
-		Serial.println(command, BIN);
-	}
+    if (this->debug)
+    {
+        Serial.print("Read (0x");
+        Serial.print(registerAddress, HEX);
+        Serial.print(") with command: 0b");
+        Serial.println(command, BIN);
+    }
 
-	// SPI - begin transaction
-	SPI.beginTransaction(this->settings);
+    SPI.beginTransaction(this->settings);
 
-	// Send the command
-	digitalWrite(this->_cs, LOW);
-	SPI.transfer16(command);
-	digitalWrite(this->_cs, HIGH);
+    // Send address
+    digitalWrite(this->_cs, LOW);
+    SPI.transfer16(command);
+    digitalWrite(this->_cs, HIGH);
 
-	delay(this->esp32_delay);
+    delay(this->esp32_delay);
 
-	// Now read the response
-	digitalWrite(this->_cs, LOW);
-	uint16_t response = SPI.transfer16(0x00);
-	digitalWrite(this->_cs, HIGH);
+    // Read response (send dummy 0x00)
+    digitalWrite(this->_cs, LOW);
+    uint16_t response = SPI.transfer16(0x00);
+    digitalWrite(this->_cs, HIGH);
 
-	// SPI - end transaction
-	SPI.endTransaction();
+    SPI.endTransaction();
 
-	if (this->debug)
-	{
-		Serial.print("Read returned: ");
-		Serial.println(response, BIN);
-	}
+    if (this->debug)
+    {
+        Serial.print("Read returned: ");
+        Serial.println(response, BIN);
+    }
 
-	// Check if the error bit is set
-	if (response & 0x4000)
-	{
-		if (this->debug)
-		{
-			Serial.println("Setting error bit");
-		}
-		this->errorFlag = true;
-	}
-	else
-	{
-		this->errorFlag = false;
-	}
+    // Check error bit (Bit 14)
+    if (response & 0x4000)
+    {
+        if (this->debug)
+            Serial.println("Setting error bit");
+        this->errorFlag = true;
+    }
+    else
+    {
+        this->errorFlag = false;
+    }
 
-	// Return the data, stripping the parity and error bits
-	return response & ~0xC000;
+    // Mask out Parity (15) and Error (14) bits
+    return response & MASK_DATA;
 }
 
 uint16_t AS5048A::write(uint16_t registerAddress, uint16_t data)
 {
+    // 1. Send Write Command
+    uint16_t command = 0x0000; // Write command (Bit 14 clear)
+    command |= registerAddress;
 
-	uint16_t command = 0x0000; // PAR=0 R/W=W
-	command |= registerAddress;
+    if (spiCalcEvenParity(command))
+        command |= 0x8000;
 
-	// Add a parity bit on the the MSB
-	command |= static_cast<uint16_t>(spiCalcEvenParity(command) << 0xF);
+    if (this->debug)
+    {
+        Serial.print("Write (0x");
+        Serial.print(registerAddress, HEX);
+        Serial.print(") with command: 0b");
+        Serial.println(command, BIN);
+    }
 
-	if (this->debug)
-	{
-		Serial.print("Write (0x");
-		Serial.print(registerAddress, HEX);
-		Serial.print(") with command: 0b");
-		Serial.println(command, BIN);
-	}
+    SPI.beginTransaction(this->settings);
 
-	// SPI - begin transaction
-	SPI.beginTransaction(this->settings);
+    digitalWrite(this->_cs, LOW);
+    SPI.transfer16(command);
+    digitalWrite(this->_cs, HIGH);
 
-	// Start the write command with the target address
-	digitalWrite(this->_cs, LOW);
-	SPI.transfer16(command);
-	digitalWrite(this->_cs, HIGH);
+    // 2. Send Data
+    uint16_t dataPacket = data;
+    if (spiCalcEvenParity(dataPacket))
+        dataPacket |= 0x8000;
 
-	uint16_t dataToSend = 0x0000;
-	dataToSend |= data;
+    if (this->debug)
+    {
+        Serial.print("Sending data to write: ");
+        Serial.println(dataPacket, BIN);
+    }
 
-	// Craft another packet including the data and parity
-	dataToSend |= static_cast<uint16_t>(spiCalcEvenParity(dataToSend) << 0xF);
+    digitalWrite(this->_cs, LOW);
+    SPI.transfer16(dataPacket);
+    digitalWrite(this->_cs, HIGH);
 
-	if (this->debug)
-	{
-		Serial.print("Sending data to write: ");
-		Serial.println(dataToSend, BIN);
-	}
+    delay(this->esp32_delay);
 
-	// Now send the data packet
-	digitalWrite(this->_cs, LOW);
-	SPI.transfer16(dataToSend);
-	digitalWrite(this->_cs, HIGH);
+    // 3. Read Confirmation (optional, but standard for this flow)
+    digitalWrite(this->_cs, LOW);
+    uint16_t response = SPI.transfer16(0x0000);
+    digitalWrite(this->_cs, HIGH);
 
-	delay(this->esp32_delay);
+    SPI.endTransaction();
 
-	digitalWrite(this->_cs, LOW);
-	uint16_t response = SPI.transfer16(0x0000);
-	digitalWrite(this->_cs, HIGH);
-
-	// SPI - end transaction
-	SPI.endTransaction();
-
-	// Return the data, stripping the parity and error bits
-	return response & ~0xC000;
+    return response & MASK_DATA;
 }
 
-/**
- * Set the delay acording to the microcontroller architecture
- */
 void AS5048A::setDelay()
 {
-	this->esp32_delay = 0;
-	if (this->debug)
-	{
-		Serial.println("Device not detected");
-	}
+    this->esp32_delay = 0;
+    if (this->debug)
+    {
+        Serial.println("Device not detected");
+    }
 }

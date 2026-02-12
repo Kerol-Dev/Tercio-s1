@@ -2,7 +2,6 @@
 #include <Arduino.h>
 #include <stddef.h>
 
-// Natural C++ config with defaults
 struct AxisConfig {
   uint32_t crc32 = 0;
   uint16_t microsteps = 16;
@@ -12,6 +11,7 @@ struct AxisConfig {
   bool     dirInvert = false;
   bool     stealthChop = true;
   bool     externalMode = false;
+  bool     limitSwitchActiveLow = true;
   bool     enableEndStop = false;
   bool     externalEncoder = false;
   bool     externalSPI = false;
@@ -26,14 +26,14 @@ struct AxisConfig {
   uint16_t canArbId = 0x001;
 };
 
-// Packed wire version (no defaults!)
+// Packed wire version
 #pragma pack(push,1)
 struct AxisConfigWire {
   uint32_t crc32;
   uint16_t microsteps;
   uint16_t stepsPerRev;
   uint8_t  units;
-  uint8_t  flags;
+  uint16_t  flags;
   uint16_t encZeroCounts;
   uint16_t driver_mA;
   float    maxRPS;
@@ -51,7 +51,7 @@ inline AxisConfigWire toWire(const AxisConfig& cfg) {
   w.stepsPerRev = cfg.stepsPerRev;
   w.units        = cfg.units;
   w.flags        = (cfg.encInvert?1:0) | (cfg.dirInvert?2:0) |
-                   (cfg.stealthChop?4:0) | (cfg.externalMode?8:0) | (cfg.enableEndStop?16:0) | (cfg.externalEncoder?32:0) | (cfg.calibratedOnce?64:0);
+                   (cfg.stealthChop?4:0) | (cfg.externalMode?8:0) | (cfg.enableEndStop?16:0) | (cfg.externalEncoder?32:0) | (cfg.calibratedOnce?64:0) | (cfg.externalSPI?128:0) | (cfg.limitSwitchActiveLow?256:0);
   w.encZeroCounts= cfg.encZeroCounts;
   w.driver_mA    = cfg.driver_mA;
   w.maxRPS       = cfg.maxRPS;

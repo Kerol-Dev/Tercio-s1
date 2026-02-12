@@ -4,15 +4,15 @@
 class SensorsADC {
 public:
   struct ThermistorCfg {
-    float R0      = 10000.0f;  // resistance at T0 (ohms)
-    float T0_C    = 25.0f;     // reference temp (°C)
-    float Beta    = 3435.0f;   // Beta coefficient
-    float Rfixed  = 10000.0f;  // fixed resistor in divider (ohms)
-    bool  pullup  = true;      // true if Rfixed to Vref and NTC to GND
+    float R0      = 10000.0f;
+    float T0_C    = 25.0f;
+    float Beta    = 3435.0f;
+    float Rfixed  = 10000.0f;
+    bool  pullup  = true;
   };
   struct VbusCfg {
-    float Rtop = 91000.0f;     // ohms (PB1 node has Rtop to VBUS)
-    float Rbot = 10000.0f;     // ohms (PB1 node has Rbot to GND)
+    float Rtop = 91000.0f;
+    float Rbot = 10000.0f;
   };
 
   bool begin(float vref = 3.3f, uint8_t adcBits = 12);

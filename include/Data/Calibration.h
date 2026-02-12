@@ -10,5 +10,5 @@ bool Calibrate_EncoderDirection(Encoder& enc,
                                 StepperControl& stepgen,
                                 AxisController& axis,
                                 AxisConfig& cfg,
-                                double test_rps = 2,
+                                double test_rps = 1,
                                 uint32_t jog_ms = 1000);

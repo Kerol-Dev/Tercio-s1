@@ -266,6 +266,13 @@ namespace tercio
         return send(can_id, (uint8_t)Cmd::SET_ENDSTOP, p, 1);
     }
 
+    // NEW wrapper
+    bool Bridge::set_limit_switch_active_low(uint16_t can_id, bool active_low)
+    {
+        uint8_t p[1] = {(uint8_t)(active_low ? 1 : 0)};
+        return send(can_id, (uint8_t)Cmd::SET_LIMITSWITCH_ACTIVELOW, p, 1);
+    }
+
     bool Bridge::do_calibrate(uint16_t can_id)
     {
         return send(can_id, (uint8_t)Cmd::DO_CALIBRATE, nullptr, 0);
@@ -379,13 +386,16 @@ namespace tercio
         out.stepsPerRev = w.stepsPerRev;
         out.units = w.units;
 
-        out.flags.encInvert = (w.flags_u8 & 0x01) != 0;
-        out.flags.dirInvert = (w.flags_u8 & 0x02) != 0;
-        out.flags.stealthChop = (w.flags_u8 & 0x04) != 0;
-        out.flags.externalMode = (w.flags_u8 & 0x08) != 0;
-        out.flags.enableEndstop = (w.flags_u8 & 0x10) != 0;
-        out.flags.externalEncoder = (w.flags_u8 & 0x20) != 0;
-        out.flags.calibratedOnce = (w.flags_u8 & 0x40) != 0;
+        // Expanded flag decoding for 16 bits
+        out.flags.encInvert = (w.flags & 0x01) != 0;
+        out.flags.dirInvert = (w.flags & 0x02) != 0;
+        out.flags.stealthChop = (w.flags & 0x04) != 0;
+        out.flags.externalMode = (w.flags & 0x08) != 0;
+        out.flags.enableEndstop = (w.flags & 0x10) != 0;
+        out.flags.externalEncoder = (w.flags & 0x20) != 0;
+        out.flags.calibratedOnce = (w.flags & 0x40) != 0;
+        out.flags.externalSPI = (w.flags & 0x80) != 0;
+        out.flags.limitSwitchActiveLow = (w.flags & 0x100) != 0;
 
         out.encZeroCounts = w.encZeroCounts;
         out.driver_mA = w.driver_mA;

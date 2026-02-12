@@ -30,9 +30,9 @@ public:
 
 private:
   AS5600   _as;
-  AS5048A  _as5048a;       // will be constructed with a real CS
+  AS5048A  _as5048a;
   uint16_t _cpr;
-  bool     _useAS5600;     // <-- not const anymore
+  bool     _useAS5600; 
   uint8_t  _as5048_cs{PB2};
 
   uint16_t _lastRaw{0};

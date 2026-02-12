@@ -6,9 +6,11 @@ from typing import Optional, Dict, Union
 import serial
 from serial.tools import list_ports
 
+
 HDR_FMT = "<HBB"
 HDR_SIZE = struct.calcsize(HDR_FMT)
 MAX_PAYLOAD = 64
+
 
 # Motor Constants
 TELEMETRY_CMD = 0x01
@@ -27,7 +29,7 @@ class Cmd(IntEnum):
     SET_MICROSTEPS = 0x06
     SET_STEALTHCHOP = 0x07
     SET_EXT_MODE = 0x08
-    SET_UNITS = 0x09  # 0=rad, 1=deg
+    SET_UNITS = 0x09
     SET_ENC_INVERT = 0x0A
     SET_ENABLED = 0x0B
     SET_STEPS_PER_REV = 0x0C
@@ -39,6 +41,7 @@ class Cmd(IntEnum):
     SET_DIR_INVERT = 0x12
     SET_EXT_SPI = 0x13
     DO_AUTO_TUNE = 0x14
+    SET_LIMITSWITCH_ACTIVELOW = 0x15
     GET_CONFIG = 0x20
     SET_IMU_ID = 0xA1
     RESET_ORIENT = 0xA2
@@ -53,8 +56,7 @@ class TuningState(IntEnum):
     DONE = 5
 
 
-# ========= Wire formats =========
-AXIS_CONFIG_FMT = "<I H H B B H H f f f f f H"
+AXIS_CONFIG_FMT = "<I H H B H H H f f f f f H"
 AXIS_CONFIG_SIZE = struct.calcsize(AXIS_CONFIG_FMT)
 
 TELEM_TAIL_FMT = "<f f f f B B B B"
@@ -71,9 +73,11 @@ class AxisFlags:
     dirInvert: bool
     stealthChop: bool
     externalMode: bool
-    enableEndstop: bool
+    enableEndStop: bool
     externalEncoder: bool
     calibratedOnce: bool
+    externalSPI: bool
+    limitSwitchActiveLow: bool
 
 
 @dataclass
@@ -139,21 +143,24 @@ _b01 = lambda b: struct.pack("<B", 1 if b else 0)
 
 def _pack_homing(p: HomingParams) -> bytes:
     cur = int(p.homingCurrent)
-    if cur < 0: cur = 0
-    if cur > 0xFFFF: cur = 0xFFFF
+    if cur < 0:
+        cur = 0
+    if cur > 0xFFFF:
+        cur = 0xFFFF
 
-    use_in1 = 1 if (p.useMINTrigger and not p.sensorlessHoming) else 0
+    # fixed name: useIN1Trigger
+    use_in1 = 1 if (p.useIN1Trigger and not p.sensorlessHoming) else 0
     active_low = 1 if (p.activeLow and not p.sensorlessHoming) else 0
 
     return struct.pack(
         "<BBHfBfB",
-        use_in1,                          
-        1 if p.sensorlessHoming else 0,  
-        cur,                             
-        float(p.offset),                 
-        active_low,                      
-        float(p.speed),                  
-        1 if p.direction else 0,          
+        use_in1,
+        1 if p.sensorlessHoming else 0,
+        cur,
+        float(p.offset),
+        active_low,
+        float(p.speed),
+        1 if p.direction else 0,
     )
 
 
@@ -172,7 +179,7 @@ def _parse_axis_config(b: bytes) -> AxisConfig:
         microsteps,
         stepsPerRev,
         units,
-        flags_u8,
+        flags_u16,      # Changed from flags_u8
         encZeroCounts,
         driver_mA,
         maxRPS,
@@ -182,29 +189,33 @@ def _parse_axis_config(b: bytes) -> AxisConfig:
         Kd,
         canArbId,
     ) = struct.unpack(AXIS_CONFIG_FMT, b[:AXIS_CONFIG_SIZE])
+
     fl = AxisFlags(
-        encInvert=bool(flags_u8 & 0x01),
-        dirInvert=bool(flags_u8 & 0x02),
-        stealthChop=bool(flags_u8 & 0x04),
-        externalMode=bool(flags_u8 & 0x08),
-        enableEndstop=bool(flags_u8 & 0x10),
-        externalEncoder=bool(flags_u8 & 0x20),
-        calibratedOnce=bool(flags_u8 & 0x40),
+        encInvert=bool(flags_u16 & 0x01),
+        dirInvert=bool(flags_u16 & 0x02),
+        stealthChop=bool(flags_u16 & 0x04),
+        externalMode=bool(flags_u16 & 0x08),
+        enableEndStop=bool(flags_u16 & 0x10),
+        externalEncoder=bool(flags_u16 & 0x20),
+        calibratedOnce=bool(flags_u16 & 0x40),
+        externalSPI=bool(flags_u16 & 0x80),
+        limitSwitchActiveLow=bool(flags_u16 & 0x100),  # Now valid!
     )
+
     return AxisConfig(
-        crc32,
-        microsteps,
-        stepsPerRev,
-        units,
-        fl,
-        encZeroCounts,
-        driver_mA,
-        maxRPS,
-        maxRPS2,
-        Kp,
-        Ki,
-        Kd,
-        canArbId,
+        crc32=crc32,
+        microsteps=microsteps,
+        stepsPerRev=stepsPerRev,
+        units=units,
+        flags=fl,
+        encZeroCounts=encZeroCounts,
+        driver_mA=driver_mA,
+        maxRPS=maxRPS,
+        maxRPS2=maxRPS2,
+        Kp=Kp,
+        Ki=Ki,
+        Kd=Kd,
+        canArbId=canArbId,
     )
 
 
@@ -214,7 +225,6 @@ def _parse_telemetry(payload: bytes) -> Optional[AxisState]:
 
     cfg = _parse_axis_config(payload[:AXIS_CONFIG_SIZE])
 
-    # Unpack updated tail (8 items)
     (curSpd, curAng, tgtAng, temp, stalled_u8, tuneState_u8, minT_u8, maxT_u8) = (
         struct.unpack(
             TELEM_TAIL_FMT,
@@ -238,7 +248,6 @@ def _parse_telemetry(payload: bytes) -> Optional[AxisState]:
 def _parse_imu_telemetry(payload: bytes) -> Optional[ImuState]:
     if len(payload) < IMU_PAYLOAD_SIZE:
         return None
-    # Unpack 7 floats
     roll, pitch, yaw, ax, ay, az, temp = struct.unpack(
         IMU_PAYLOAD_FMT, payload[:IMU_PAYLOAD_SIZE]
     )
@@ -283,7 +292,7 @@ class Bridge:
         if self._ser:
             try:
                 self._ser.close()
-            except:
+            except Exception:
                 pass
         self._reader = None
         self._ser = None
@@ -322,24 +331,20 @@ class Bridge:
             payload = bytes(self._rx_buf[HDR_SIZE:total])
             del self._rx_buf[:total]
 
-            # 1. Stepper Telemetry (ID=0x000, CMD=0x01)
             if cmd == TELEMETRY_CMD:
                 pkt = _parse_telemetry(payload)
                 if pkt:
                     with self._lock:
                         self._state[pkt.config.canArbId] = pkt
 
-            # 2. Stepper Config Response (ID=0x000, CMD=0x20)
             elif cmd == GET_CONFIG_CMD:
                 if len(payload) >= AXIS_CONFIG_SIZE:
                     cfg = _parse_axis_config(payload[:AXIS_CONFIG_SIZE])
                     with self._lock:
                         st = self._state.get(cfg.canArbId)
-                        # We only update if it exists and is an AxisState
                         if st and isinstance(st, AxisState):
                             st.config = cfg
                         else:
-                            # seed with minimal state
                             self._state[cfg.canArbId] = AxisState(
                                 config=cfg,
                                 currentSpeed=0.0,
@@ -352,7 +357,6 @@ class Bridge:
                                 maxTriggered=False,
                             )
 
-            # 3. IMU Telemetry (CMD=0x02)
             elif cmd == IMU_TELEMETRY_CMD:
                 imu_pkt = _parse_imu_telemetry(payload)
                 if imu_pkt:
@@ -418,6 +422,9 @@ class Bridge:
 
     def set_endstop(self, can_id: int, enable: bool):
         self.send(can_id, Cmd.SET_ENDSTOP, _b01(enable))
+
+    def set_limitswitch_activelow(self, can_id: int, active_low: bool):
+        self.send(can_id, Cmd.SET_LIMITSWITCH_ACTIVELOW, _b01(active_low))
 
     def do_calibrate(self, can_id: int):
         self.send(can_id, Cmd.DO_CALIBRATE, b"")
@@ -497,6 +504,9 @@ class Stepper:
     def set_endstop(self, on: bool):
         self.bridge.set_endstop(self.id, on)
 
+    def set_limitswitch_activelow(self, active_low: bool):
+        self.bridge.set_limitswitch_activelow(self.id, active_low)
+
     def do_calibrate(self):
         self.bridge.do_calibrate(self.id)
 
@@ -504,11 +514,6 @@ class Stepper:
         self.bridge.do_homing(self.id, p)
 
     def do_auto_tune(self, min_angle: float, max_angle: float):
-        """
-        Starts the auto-tuning process.
-        :param min_angle: Minimum angle for the tuning sweep.
-        :param max_angle: Maximum angle for the tuning sweep.
-        """
         self.bridge.do_auto_tune(self.id, min_angle, max_angle)
 
     def get_axis_state(self) -> Optional[AxisState]:
