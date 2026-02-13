@@ -3,7 +3,7 @@
 [![Documentation](https://img.shields.io/badge/docs-docs.terciolabs.com-blue)](https://docs.terciolabs.com)  
 [Buy / Store](https://terciolabs.com/store)
 
-![Tercio S1](./hero.png)
+![Tercio S1](./Github_Files/Images/hero.png)
 
 **Tercio S1** is a compact, high-performance closed-loop stepper driver with 14-bit encoder feedback and FDCAN communication. Designed for robotics, CNC, and automation applications requiring precision control at an accessible price point.
 
