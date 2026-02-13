@@ -1,7 +1,7 @@
 # Tercio S1 Stepper Driver
 
 [![Documentation](https://img.shields.io/badge/docs-docs.terciolabs.com-blue)](https://docs.terciolabs.com)  
-[Buy / Store](https://terciolabs.com/store)
+[![Store](https://img.shields.io/badge/store-www.terciolabs.com-orange)](https://www.terciolabs.com)  
 
 ![Tercio S1](./Github_Files/Images/hero.png)
 
