@@ -4,3 +4,4 @@
 .vscode/launch.json
 .vscode/ipch
 .Tercio-Stepper.code-workspace
+.test.py

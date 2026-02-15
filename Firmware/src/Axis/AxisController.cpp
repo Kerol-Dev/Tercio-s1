@@ -14,10 +14,8 @@ void SimplePID::setTunings(double Kp, double Ki, double Kd)
 
 double SimplePID::compute(double err, double dt)
 {
-  // Integral term accumulates error over time (no anti-windup by design).
   integ += err * ki * dt;
 
-  // Derivative term uses error slope; guarded for dt==0.
   const double deriv = (dt > 0.0) ? (err - ePrev) / dt : 0.0;
   ePrev = err;
 

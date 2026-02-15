@@ -284,11 +284,6 @@
       gap: 8px;
     }
 
-    .dev-header2 .controls select {
-      padding: 8px 12px;
-      border-radius: 10px;
-    }
-
     @media (max-width:700px) {
       .dev-header2 {
         flex-direction: column;
@@ -514,6 +509,7 @@
       background: linear-gradient(180deg, var(--card), var(--card2));
       border-radius: 0 0 20px 20px;
       box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+      position: relative;
     }
 
     .brand-header h1 {
@@ -522,6 +518,36 @@
       font-weight: 700;
       letter-spacing: 0.5px;
       color: var(--fg);
+    }
+
+    /* New Theme Button */
+    .theme-btn {
+      position: absolute;
+      top: 50%;
+      right: 20px;
+      transform: translateY(-50%);
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s;
+    }
+
+    .theme-btn:hover {
+      color: var(--fg);
+      background: var(--badge-bg);
+    }
+
+    .theme-btn svg {
+      width: 20px;
+      height: 20px;
+      fill: currentColor;
     }
 
     /* IMU 3D Visualization */
@@ -752,6 +778,13 @@
 
   <header class="brand-header">
     <h1>Tercio Labs <span>Web Control UI</span></h1>
+    <button id="btnTheme" class="theme-btn" title="Toggle Theme">
+      <!-- Icon updated by JS -->
+      <svg viewBox="0 0 24 24">
+        <path
+          d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.63-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.64 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2zm-2 1H8v-6c0-2.48 1.51-4.5 4-4.5s4 2.02 4 4.5v6z" />
+      </svg>
+    </button>
   </header>
 
   <div class="app">
@@ -763,11 +796,6 @@
         </div>
         <div class="controls">
           <button id="btnConnect" class="btn">Connect</button>
-          <select id="selTheme" title="Theme">
-            <option value="auto">Auto</option>
-            <option value="light">Light</option>
-            <option value="dark">Dark</option>
-          </select>
         </div>
       </div>
       <div class="search">
@@ -927,8 +955,6 @@
                   class="knob"></span></span><span>Encoder Invert</span></label>
             <label class="toggle gated"><input id="tglDirInvert" type="checkbox"><span class="switch"><span
                   class="knob"></span></span><span>Direction Invert</span></label>
-            <label class="toggle gated"><input id="tglExtSPI" type="checkbox"><span class="switch"><span
-                  class="knob"></span></span><span>External SPI</span></label>
             <label class="toggle gated"><input id="tglLimitActiveLow" type="checkbox"><span class="switch"><span
                   class="knob"></span></span><span>Limit Sw. Active Low</span></label>
           </div>
@@ -1063,8 +1089,10 @@
       SET_ID: 0x05, SET_MICROSTEPS: 0x06, SET_STEALTHCHOP: 0x07, SET_EXT_MODE: 0x08,
       SET_UNITS: 0x09, SET_ENC_INVERT: 0x0A, SET_ENABLED: 0x0B, SET_STEPS_PER_REV: 0x0C,
       DO_CALIBRATE: 0x0D, DO_HOMING: 0x0E, SET_ENDSTOP: 0x0F, SET_EXT_ENCODER: 0x10,
-      SET_ACCEL_LIMIT: 0x11, SET_DIR_INVERT: 0x12, SET_EXT_SPI: 0x13, DO_AUTO_TUNE: 0x14,
-      SET_LIMITSWITCH_ACTIVELOW: 0x15, // New command
+      SET_ACCEL_LIMIT: 0x11, SET_DIR_INVERT: 0x12,
+      // EXT_SPI (0x13) REMOVED
+      DO_AUTO_TUNE: 0x13,
+      SET_LIMITSWITCH_ACTIVELOW: 0x14,
       TELEMETRY: 0x01, IMU_TELEMETRY: 0x02, IMU_SET_ID: 0xA1, RESET_ORIENT: 0xA2
     };
 
@@ -1101,27 +1129,14 @@
         o.set(h, 0); o.set(p, h.length);
         return o;
       },
-      // UPDATED ID LOGIC: Handles IMU 3-byte vs Motor 2-byte
       setId: (id, nid, isImu = false) => {
-        if (isImu) {
-          const p = new Uint8Array(2); // IMU uses 2 byte payload for SetID too usually? 
-          // Assuming standard behavior, let's stick to u16le unless IMU is special.
-          // Actually in your python code it was u16.
-          // Let's use u16le for both to be safe.
-          const safe = clamp11(nid);
-          const p2 = u16le(safe);
-          // IMU cmd A1
-          const h = header(id, CMD.IMU_SET_ID, p2.length);
-          const o = new Uint8Array(h.length + p2.length);
-          o.set(h, 0); o.set(p2, h.length);
-          return o;
-        } else {
-          const p = u16le(clamp11(nid));
-          const h = header(id, CMD.SET_ID, p.length);
-          const o = new Uint8Array(h.length + p.length);
-          o.set(h, 0); o.set(p, h.length);
-          return o;
-        }
+        const safe = clamp11(nid);
+        const p = u16le(safe);
+        const c = isImu ? CMD.IMU_SET_ID : CMD.SET_ID;
+        const h = header(id, c, p.length);
+        const o = new Uint8Array(h.length + p.length);
+        o.set(h, 0); o.set(p, h.length);
+        return o;
       },
       microsteps: (id, n) => {
         const p = u16le(n);
@@ -1155,437 +1170,93 @@
         return o;
       },
       calibrate: (id) => header(id, CMD.DO_CALIBRATE, 0),
-      // uint8 useMINTrigger; uint8 sensorlessHoming; uint16 homingCurrent; float offset; uint8 activeLow; float speed; uint8 direction;
-      homing: (id, { useMINTrigger, sensorlessHoming, homingCurrent, offset, activeLow, speed, direction }) => {
-        const p = new Uint8Array(14);
-        p[0] = useMINTrigger ? 1 : 0;
-        p[1] = sensorlessHoming ? 1 : 0;
-        p.set(u16le(parseInt(homingCurrent, 10) || 0), 2);
-        p.set(f32le(offset), 4);
-        p[8] = activeLow ? 1 : 0;
-        p.set(f32le(speed), 9);
-        p[13] = direction ? 1 : 0;
-        const h = header(id, CMD.DO_HOMING, p.length);
-        const o = new Uint8Array(h.length + p.length);
-        o.set(h, 0); o.set(p, h.length);
-        return o;
-      },
-      autoTune: (id, min, max) => {
+      resetOrient: (id) => header(id, CMD.RESET_ORIENT, 0),
+      autoTune: (id, minA, maxA) => {
         const p = new Uint8Array(8);
-        p.set(f32le(min), 0);
-        p.set(f32le(max), 4);
+        p.set(f32le(minA), 0);
+        p.set(f32le(maxA), 4);
         const h = header(id, CMD.DO_AUTO_TUNE, p.length);
         const o = new Uint8Array(h.length + p.length);
         o.set(h, 0); o.set(p, h.length);
         return o;
       },
-      resetOrient: (id) => header(id, CMD.RESET_ORIENT, 0),
+      home: (id, p) => {
+        // useIN1(1), sensorless(1), cur(2), off(4), actLow(1), speed(4), dir(1) -> 14 bytes
+        const b = new Uint8Array(14);
+        let o = 0;
+        // Logic: if sensorless, useIN1 is moot. 
+        // Logic for wire: useIN1=1 if trigger active & !sensorless
+        const useIn1 = (p.useIN1 && !p.sensorless) ? 1 : 0;
+        const actLow = (p.activeLow && !p.sensorless) ? 1 : 0;
+
+        b[o++] = useIn1;
+        b[o++] = p.sensorless ? 1 : 0;
+        b.set(u16le(p.cur), o); o += 2;
+        b.set(f32le(p.off), o); o += 4;
+        b[o++] = actLow;
+        b.set(f32le(p.speed), o); o += 4;
+        b[o++] = p.dir ? 1 : 0;
+
+        const h = header(id, CMD.DO_HOMING, b.length);
+        const out = new Uint8Array(h.length + b.length);
+        out.set(h, 0); out.set(b, h.length);
+        return out;
+      }
     };
 
-    /* THEME global */
-    const selTheme = $('selTheme');
-    const THEME_KEY = 'tercio_theme_global';
-
-    const applyTheme = (t) => {
-      document.documentElement.setAttribute('data-theme', t);
-    };
-    const saveTheme = (t) => {
-      try { localStorage.setItem(THEME_KEY, t); } catch (e) { }
-    };
-    const loadTheme = () => {
-      try { return localStorage.getItem(THEME_KEY) || 'auto'; } catch (e) { return 'auto'; }
+    /* STATE */
+    const store = {
+      devices: new Map(), // id -> {type, id, ...params}
+      activeId: null,
+      theme: 'dark'
     };
 
-    selTheme.value = loadTheme();
-    applyTheme(selTheme.value);
-
-    selTheme.addEventListener('change', () => {
-      const t = selTheme.value;
-      applyTheme(t);
-      saveTheme(t);
-    });
-
-    /* UI refs */
-    const devListEl = $('devList'), devSearch = $('devSearch');
-    const statusEl = $('status'), previewEl = $('preview');
-    const activeIdEl = $('activeId'), activeUnitsEl = $('activeUnits'), targetUnitsEl = $('targetUnits');
-    const motorUnitsTag = $('motorUnitsTag'), imuTag = $('imuTag');
-    const motorControls = $('motorControls'), imuControls = $('imuControls'), imuCube = $('imuCube');
-
-    const inTarget = $('inTarget'), inRps = $('inRps'), inRps2 = $('inRps2'), inmA = $('inmA');
-    const inTuneMin = $('inTuneMin'), inTuneMax = $('inTuneMax');
-    const tglEnable = $('tglEnable');
-    const newIdEl = $('newId'), msEl = $('ms'), sprEl = $('spr');
-
-    const tglUnitsDeg = $('tglUnitsDeg'), tglStealth = $('tglStealth'), tglExtEnc = $('tglExtEnc'),
-      tglExtMode = $('tglExtMode'), tglEndstop = $('tglEndstop'), tglEncInvert = $('tglEncInvert'),
-      tglDirInvert = $('tglDirInvert'), tglExtSPI = $('tglExtSPI'), tglLimitActiveLow = $('tglLimitActiveLow');
-
-    const pidKp = $('pidKp'), pidKi = $('pidKi'), pidKd = $('pidKd');
-
-    // Homing UI refs updated
-    const homeOffset = $('homeOffset'), homeSpeed = $('homeSpeed');
-    const homeUseMin = $('homeUseMin');
-    const homeDirPlus = $('homeDirPlus');
-    const homeCurrent = $('homeCurrent');
-    const homeModeLimit = $('homeModeLimit'), homeModeSensorless = $('homeModeSensorless');
-    const homeModeHint = $('homeModeHint');
-    const homeUseMinWrap = $('homeUseMinWrap');
-    const homeCurrentWrap = $('homeCurrentWrap');
-
-    const tlmSpeed = $('tlmSpeed'), tlmAngle = $('tlmAngle'), tlmTemp = $('tlmTemp'),
-      tlmMin = $('tlmMin'), tlmMax = $('tlmMax'), tlmCal = $('tlmCal'), tlmStalled = $('tlmStalled'),
-      tlmTune = $('tlmTune');
-    const tblBodies = $('tblBodies');
-    const logEl = $('log');
-    const stallWarn = $('stallWarn'), calibWarn = $('calibWarn');
-
-    // IMU Vals
-    const valRoll = $('valRoll'), valPitch = $('valPitch'), valYaw = $('valYaw');
-    const valAx = $('valAx'), valAy = $('valAy'), valAz = $('valAz');
-
-    const setStatus = (txt) => statusEl.innerHTML = `<small>${txt}</small>`;
-    const logLine = (p, buf, color) => {
-      const time = new Date().toLocaleTimeString();
-      const text = (buf instanceof Uint8Array) ? bytesHex(buf) : String(buf);
-      const div = document.createElement('div');
-      div.innerHTML = `<span style="color:#9ca3af">[${time}]</span> <b style="color:${color}">${p}</b> ${text}`;
-      logEl.appendChild(div);
-      logEl.scrollTop = logEl.scrollHeight;
+    const ICONS = {
+      light: `<svg viewBox="0 0 24 24"><path d="M12 7c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5zM2 13h2c.55 0 1-.45 1-1s-.45-1-1-1H2c-.55 0-1 .45-1 1s.45 1 1 1zm18 0h2c.55 0 1-.45 1-1s-.45-1-1-1h-2c-.55 0-1 .45-1 1s.45 1 1 1zM11 2v2c0 .55.45 1 1 1s1-.45 1-1V2c0-.55-.45-1-1-1s-1 .45-1 1zm0 18v2c0 .55.45 1 1 1s1-.45 1-1v-2c0-.55-.45-1-1-1s-1 .45-1 1zM5.99 4.58c-.39-.39-1.03-.39-1.41 0-.39.39-.39 1.03 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0s.39-1.03 0-1.41L5.99 4.58zm12.37 12.37c-.39-.39-1.03-.39-1.41 0-.39.39-.39 1.03 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0 .39-.39.39-1.03 0-1.41l-1.06-1.06zm1.06-10.96c.39-.39.39-1.03 0-1.41-.39-.39-1.03-.39-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06zM7.05 18.36c.39-.39.39-1.03 0-1.41-.39-.39-1.03-.39-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06z"/></svg>`,
+      dark: `<svg viewBox="0 0 24 24"><path d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9 9-4.03 9-9c0-.46-.04-.92-.1-1.36-.98 1.37-2.58 2.26-4.4 2.26-2.98 0-5.4-2.42-5.4-5.4 0-1.81.89-3.42 2.26-4.4-.44-.06-.9-.1-1.36-.1z"/></svg>`
     };
-    const logTx = (u8arr) => logLine('->', u8arr, '#60a5fa');
-    const logInfo = (t) => logLine('::', t, '#f59e0b');
 
-    /* App state */
-    const store = { devices: new Map(), tiles: new Map(), activeId: null, lastCfgReqId: null };
+    function setTheme(mode) {
+      store.theme = mode;
+      const root = document.documentElement;
+      if (mode === 'auto') root.removeAttribute('data-theme');
+      else root.setAttribute('data-theme', mode);
 
-    // Homing mode state
-    let homingMode = 'limit'; // 'limit' | 'sensorless'
-
-    function setHomingMode(mode) {
-      homingMode = mode;
-      const isSensorless = (mode === 'sensorless');
-
-      homeModeLimit.classList.toggle('active', !isSensorless);
-      homeModeSensorless.classList.toggle('active', isSensorless);
-
-      homeModeLimit.setAttribute('aria-selected', !isSensorless ? 'true' : 'false');
-      homeModeSensorless.setAttribute('aria-selected', isSensorless ? 'true' : 'false');
-
-      homeUseMinWrap.classList.toggle('hidden', isSensorless); // not relevant for sensorless UX
-      homeCurrentWrap.classList.toggle('hidden', !isSensorless); // only relevant for sensorless
-
-      homeModeHint.innerHTML = isSensorless
-        ? `Uses stall detection. Homing current is applied during seek.`
-        : `Uses MIN/MAX endstop inputs. Configure <i>Active Low</i> in Modes & Flags.`;
+      btnTheme.innerHTML = ICONS[mode];
+      localStorage.setItem('tercio_theme', mode);
     }
 
-    homeModeLimit.addEventListener('click', () => setHomingMode('limit'));
-    homeModeSensorless.addEventListener('click', () => setHomingMode('sensorless'));
-    setHomingMode('limit');
+    // Cycle: Light -> Dark
+    btnTheme.onclick = () => {
+      const next = (store.theme === 'dark') ? 'light' : 'dark';
+      setTheme(next);
+    };
 
-    /* Tiles */
-    function makeTile(id, st) {
-      const root = document.createElement('div');
-      root.className = 'dev-item';
-      root.tabIndex = 0;
-      root.dataset.id = String(id);
-      root.setAttribute('role', 'button');
-      root.setAttribute('aria-selected', 'false');
-      root.innerHTML = `
-      <div class="mono" id="txt">0x${id.toString(16).toUpperCase()}</div>
-      <div class="dev-tags">
-        <span class="tag unit">${st.units === 1 ? 'deg' : 'rad'}</span>
-        <span class="tag spd">${(st.speed != null ? st.speed.toFixed(2) : '--')}</span>
-        <span class="tag ang">${(st.angle != null ? st.angle.toFixed(2) : '--')}</span>
-        <span class="tag tmp">T:${(st.temp != null ? st.temp.toFixed(1) : '--')}</span>
-        <span class="tag cal ${!st.cal ? 'warn' : ''}">${st.cal ? 'CAL' : 'UNCAL'}</span>
-      </div>
-      <div class="mono ts" style="opacity:.7">${st.ts ? new Date(st.ts).toLocaleTimeString() : '--'}</div>
-    `;
-      const focus = () => setActive(id);
-      root.onclick = focus;
-      root.onkeydown = (e) => { if (e.key === 'Enter') { e.key; e.preventDefault(); focus(); } };
-      devListEl.appendChild(root);
+    // Load saved theme
+    (() => {
+      const s = localStorage.getItem('tercio_theme');
+      if (s) setTheme(s);
+      else setTheme('dark');
+    })();
 
-      const fields = {
-        root,
-        unit: root.querySelector('.unit'),
-        spd: root.querySelector('.spd'),
-        ang: root.querySelector('.ang'),
-        tmp: root.querySelector('.tmp'),
-        cal: root.querySelector('.cal'),
-        ts: root.querySelector('.ts'),
-        idtxt: root.querySelector('#txt')
-      };
-      store.tiles.set(id, fields);
-      return fields;
+    function logTx(u8) {
+      // console.log("TX:", bytesHex(u8));
+    }
+    function logInfo(msg) {
+      const div = document.createElement("div");
+      div.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+      log.appendChild(div);
+      log.scrollTop = log.scrollHeight;
     }
 
-    function updateTile(id, st) {
-      let t = store.tiles.get(id);
-      if (!t) t = makeTile(id, st);
-
-      const isImu = (st.type === 'imu');
-      if (isImu) {
-        if (t.unit) t.unit.textContent = "IMU";
-        if (t.spd) t.spd.textContent = `R:${st.roll != null ? st.roll.toFixed(1) : '--'}`;
-        if (t.ang) t.ang.textContent = `P:${st.pitch != null ? st.pitch.toFixed(1) : '--'}`;
-        if (t.tmp) t.tmp.textContent = `Y:${st.yaw != null ? st.yaw.toFixed(1) : '--'}`;
-
-        const tempVal = st.imuTemp != null ? st.imuTemp : st.temp;
-        if (t.cal) {
-          t.cal.textContent = `T:${tempVal != null ? tempVal.toFixed(1) : '--'}`;
-          t.cal.classList.remove('warn');
-        }
-      } else {
-        if (t.unit) t.unit.textContent = (st.units === 1) ? 'deg' : 'rad';
-        if (t.spd) t.spd.textContent = `spd:${(st.speed != null ? st.speed.toFixed(2) : '--')}`;
-        if (t.ang) t.ang.textContent = `ang:${(st.angle != null ? st.angle.toFixed(2) : '--')}`;
-        if (t.tmp) t.tmp.textContent = `T:${(st.temp != null ? st.temp.toFixed(1) : '--')}`;
-        if (t.cal) {
-          t.cal.textContent = st.cal ? 'CAL' : 'UNCAL';
-          t.cal.classList.toggle('warn', !st.cal);
-        }
-        t.root.classList.toggle('stalled', !!st.stalled);
-      }
-
-      if (t.ts) t.ts.textContent = st.ts ? new Date(st.ts).toLocaleTimeString() : '--';
-
-      const act = (store.activeId === id);
-      t.root.classList.toggle('active', act);
-      t.root.setAttribute('aria-selected', act ? 'true' : 'false');
+    function setStatus(msg) {
+      status.innerHTML = `<small>${msg}</small>`;
     }
 
-    function syncFormFromState(id, fullSync = false) {
-      const st = store.devices.get(id);
-      if (!st || st.type === 'imu') return;
-
-      const isDeg = (st.units === 1);
-      const u = tglUnitsDeg;
-      if (u) { u.indeterminate = false; u.checked = isDeg; }
-
-      const fl = st.flags ?? 0;
-      const FL = { ENCINV: 0x01, DIRINV: 0x02, STEALTH: 0x04, EXTMODE: 0x08, ENDSTOP: 0x10, EXTENC: 0x20, CAL: 0x40, EXTSPI: 0x80, ACTIVELOW: 0x100 };
-
-      const setCB = (el, on) => {
-        if (el && document.activeElement !== el) {
-          el.indeterminate = false;
-          el.checked = !!on;
-        }
-      };
-
-      setCB(tglStealth, fl & FL.STEALTH);
-      setCB(tglExtEnc, fl & FL.EXTENC);
-      setCB(tglExtMode, fl & FL.EXTMODE);
-      setCB(tglEndstop, fl & FL.ENDSTOP);
-      setCB(tglEncInvert, fl & FL.ENCINV);
-      setCB(tglDirInvert, fl & FL.DIRINV);
-      setCB(tglExtSPI, fl & FL.EXTSPI);
-      setCB(tglLimitActiveLow, fl & FL.ACTIVELOW);
-
-      if (fullSync) {
-        const setVal = (el, v) => {
-          if (el && v != null) {
-            if (document.activeElement === el) return;
-            el.value = String(v);
-          }
-        };
-
-        setVal(msEl, st.microsteps);
-        setVal(sprEl, st.stepsPerRev);
-        setVal(inmA, st.currentmA);
-        if (st.maxRPS != null) setVal(inRps, st.maxRPS.toFixed(2).replace('.00', '').replace('.0', ''));
-        if (st.maxRPS2 != null) setVal(inRps2, st.maxRPS2.toFixed(1).replace('.00', '').replace('.0', ''));
-
-        if (st.kp != null) setVal(pidKp, st.kp.toFixed(3).replace('.000', '').replace('.0', ''));
-        if (st.ki != null) setVal(pidKi, st.ki.toFixed(3).replace('.000', '').replace('.0', ''));
-        if (st.kd != null) setVal(pidKd, st.kd.toFixed(3).replace('.000', '').replace('.0', ''));
-      }
-
-      activeUnitsEl.textContent = isDeg ? 'deg' : 'rad';
-      targetUnitsEl.textContent = isDeg ? 'deg' : 'rad';
-      btn90.textContent = isDeg ? '90' : 'π/2';
-      btn180.textContent = isDeg ? '180' : 'π';
-    }
-
-    function renderActive() {
-      const st = store.devices.get(store.activeId);
-      activeIdEl.textContent = (store.activeId !== null) ? `0x${store.activeId.toString(16).toUpperCase()}` : '--';
-
-      if (!st) {
-        motorControls.classList.add('hidden');
-        imuControls.classList.add('hidden');
-        document.querySelectorAll('.motor-specific').forEach(el => el.classList.add('hidden'));
-        return;
-      }
-
-      const isImu = (st && st.type === 'imu');
-
-      if (isImu) {
-        motorControls.classList.add('hidden');
-        imuControls.classList.remove('hidden');
-        imuTag.classList.remove('hidden');
-        motorUnitsTag.classList.add('hidden');
-        document.querySelectorAll('.motor-specific').forEach(el => el.classList.add('hidden'));
-
-        const r = st.roll || 0, p = st.pitch || 0, y = st.yaw || 0;
-        valRoll.textContent = r.toFixed(2);
-        valPitch.textContent = p.toFixed(2);
-        valYaw.textContent = y.toFixed(2);
-        valAx.textContent = (st.ax || 0).toFixed(2);
-        valAy.textContent = (st.ay || 0).toFixed(2);
-        valAz.textContent = (st.az || 0).toFixed(2);
-
-        imuCube.style.transform = `rotateX(${p}deg) rotateZ(${y * -1}deg) rotateY(${r}deg)`;
-
-        // Clear motor fields
-        tlmSpeed.textContent = "--"; tlmAngle.textContent = "--";
-        const tempVal = st.imuTemp != null ? st.imuTemp : st.temp;
-        tlmTemp.textContent = (tempVal != null ? tempVal.toFixed(1) : "--");
-        tlmMin.textContent = "--"; tlmMax.textContent = "--";
-        tlmCal.textContent = "--"; tlmStalled.textContent = "--"; tlmTune.textContent = "--";
-        stallWarn.classList.add('hidden');
-      } else {
-        motorControls.classList.remove('hidden');
-        imuControls.classList.add('hidden');
-        imuTag.classList.add('hidden');
-        motorUnitsTag.classList.remove('hidden');
-        document.querySelectorAll('.motor-specific').forEach(el => el.classList.remove('hidden'));
-
-        const units = st ? (st.units || 0) : 0;
-        activeUnitsEl.textContent = (units === 1) ? 'deg' : 'rad';
-        targetUnitsEl.textContent = (units === 1) ? 'deg' : 'rad';
-        btn90.textContent = (units === 1) ? '90' : 'π/2';
-        btn180.textContent = (units === 1) ? '180' : 'π';
-
-        tlmSpeed.textContent = (st && st.speed != null) ? st.speed.toFixed(4) : '--';
-        tlmAngle.textContent = (st && st.angle != null) ? st.angle.toFixed(4) : '--';
-        tlmTemp.textContent = (st && st.temp != null) ? st.temp.toFixed(1) : '--';
-
-        tlmMin.textContent = (st && st.min != null) ? (st.min ? 'YES' : 'NO') : '--';
-        tlmMax.textContent = (st && st.max != null) ? (st.max ? 'YES' : 'NO') : '--';
-        tlmCal.textContent = (st) ? (st.cal ? 'YES' : 'NO') : '--';
-
-        const isStalled = !!(st && st.stalled);
-        tlmStalled.textContent = isStalled ? 'YES' : 'NO';
-        tlmStalled.style.color = isStalled ? '#ef4444' : 'inherit';
-        stallWarn.classList.toggle('hidden', !isStalled);
-
-        const tuneVal = st ? (st.tuneState || 0) : 0;
-        const tuneStr = TUNESTATES[tuneVal] || String(tuneVal);
-        tlmTune.textContent = tuneStr;
-        tlmTune.style.color = (tuneVal !== 0) ? '#60a5fa' : 'inherit';
-      }
-    }
-
-    function renderTable() {
-      const ids = [...store.devices.keys()].sort((a, b) => a - b);
-      tblBodies.innerHTML = '';
-      ids.forEach(id => {
-        const s = store.devices.get(id);
-        const tr = document.createElement('tr');
-        const td = (v) => { const el = document.createElement('td'); el.textContent = v; return el; };
-        const tdHTML = (h) => { const el = document.createElement('td'); el.innerHTML = h; return el; };
-
-        tr.appendChild(td(id));
-        if (s.type === 'imu') {
-          tr.appendChild(td("deg")); // IMU always deg
-          tr.appendChild(td(`R: ${(s.roll || 0).toFixed(2)}`));
-          tr.appendChild(td(`P: ${(s.pitch || 0).toFixed(2)}`));
-          tr.appendChild(td(`Y: ${(s.yaw || 0).toFixed(2)}`));
-          tr.appendChild(td('--'));
-          tr.appendChild(td('--'));
-          tr.appendChild(td('--'));
-          tr.appendChild(td('--'));
-          tr.appendChild(td('--'));
-        } else {
-          tr.appendChild(td(s.units === 1 ? 'deg' : 'rad'));
-          tr.appendChild(td(s.speed != null ? s.speed.toFixed(3) : '--'));
-          tr.appendChild(td(s.angle != null ? s.angle.toFixed(3) : '--'));
-          tr.appendChild(td(s.temp != null ? s.temp.toFixed(1) : '--'));
-
-          if (s.stalled) tr.appendChild(tdHTML(`<b style="color:#ef4444">YES</b>`));
-          else tr.appendChild(td('NO'));
-
-          const ts = s.tuneState || 0;
-          if (ts !== 0) tr.appendChild(tdHTML(`<b style="color:#60a5fa">${TUNESTATES[ts] || ts}</b>`));
-          else tr.appendChild(td('Idle'));
-
-          tr.appendChild(td(s.min != null ? (s.min ? 'YES' : 'NO') : '--'));
-          tr.appendChild(td(s.max != null ? (s.max ? 'YES' : 'NO') : '--'));
-          tr.appendChild(td(s.cal ? 'YES' : 'NO'));
-        }
-        tr.appendChild(td(s.ts ? new Date(s.ts).toLocaleTimeString() : '--'));
-        tblBodies.appendChild(tr);
-      });
-    }
-
-    function gate() {
-      const gatedEls = document.querySelectorAll('.gated input, .gated select, .gated button, .gated textarea');
-      const st = store.devices.get(store.activeId);
-
-      if (!st) {
-        gatedEls.forEach(el => el.disabled = true);
-        calibWarn.classList.add('hidden');
-        return;
-      }
-
-      if (st.type === 'imu') {
-        gatedEls.forEach(el => el.disabled = true);
-        calibWarn.classList.add('hidden');
-        return;
-      }
-
-      // Motor logic
-      const ok = !!(st && st.cal);
-      gatedEls.forEach(el => el.disabled = !ok);
-      calibWarn.classList.toggle('hidden', !(!store.activeId || ok));
-    }
-
-    function filterList() {
-      const q = devSearch.value.trim().toLowerCase();
-      for (const [id, t] of store.tiles) {
-        const st = store.devices.get(id);
-        const txt = `${id} ${st.type} ${st.cal ? 'calibrated' : 'not'} ${st.stalled ? 'stalled' : ''}`;
-        t.root.style.display = (!q || txt.toLowerCase().includes(q)) ? '' : 'none';
-      }
-    }
-
-    function refreshListDevices() {
-      const ids = [...store.devices.keys()].sort((a, b) => a - b);
-      ids.forEach(id => {
-        const st = store.devices.get(id);
-        if (!store.tiles.has(id)) makeTile(id, st);
-        else updateTile(id, st);
-      });
-      filterList();
-    }
-
-    function setActive(id) {
-      if (!store.devices.has(id)) return;
-      store.activeId = id;
-      for (const [tid, t] of store.tiles) {
-        const act = (tid === id);
-        t.root.classList.toggle('active', act);
-        t.root.setAttribute('aria-selected', act ? 'true' : 'false');
-      }
-      syncFormFromState(id, true);
-      renderActive();
-      gate();
-      preview();
-    }
-
-    function preview() {
-      if (store.activeId === null) { previewEl.textContent = '--'; return; }
-      const id = store.activeId;
-      const val = parseFloat(inTarget.value) || 0;
-      previewEl.textContent = bytesHex(frame.target(id, val));
-    }
-
-    const AXIS_CFG_SIZE = 36;
+    /* TELEMETRY PARSING */
     function parseTelemetryPayload(canArbId, u8arr) {
-      if (u8arr.length < AXIS_CFG_SIZE + 20) return null;
+      // 37 is the size of AxisConfigWire packed.
+      if (u8arr.length < 37) return null;
       const dv = new DataView(u8arr.buffer, u8arr.byteOffset, u8arr.byteLength);
 
       let o = 0;
@@ -1593,8 +1264,10 @@
       const microsteps = dv.getUint16(o, true); o += 2;
       const stepsPerRev = dv.getUint16(o, true); o += 2;
       const units = dv.getUint8(o); o += 1;
-      // Updated flag parsing (uint16)
       const flags = dv.getUint16(o, true); o += 2;
+
+      const encZeroCounts = dv.getUint16(o, true); o += 2;
+
       const currentmA = dv.getUint16(o, true); o += 2;
       const maxRPS = dv.getFloat32(o, true); o += 4;
       const maxRPS2 = dv.getFloat32(o, true); o += 4;
@@ -1602,6 +1275,11 @@
       const ki = dv.getFloat32(o, true); o += 4;
       const kd = dv.getFloat32(o, true); o += 4;
       const payloadCanId = dv.getUint16(o, true); o += 2;
+
+      // Padding for float alignment (37 -> 40)
+      while (o % 4 !== 0) o++;
+
+      if (o + 20 > u8arr.length) return null;
 
       const speed = dv.getFloat32(o, true); o += 4;
       const angle = dv.getFloat32(o, true); o += 4;
@@ -1612,18 +1290,27 @@
       const min = dv.getUint8(o) !== 0; o += 1;
       const max = dv.getUint8(o) !== 0; o += 1;
 
-      // Check CAL flag (bit 6 => 0x40)
+      // Extract flags
+      // bit 0: encInvert
+      // bit 1: dirInvert
+      // bit 2: stealthChop
+      // bit 3: externalMode
+      // bit 4: enableEndStop
+      // bit 5: externalEncoder
+      // bit 6: calibratedOnce
+      // bit 7: limitSwitchActiveLow (previously externalSPI)
+
       const cal = (flags & 0x40) !== 0;
+      const activeLow = (flags & 0x80) !== 0; // New mapping
 
       return {
         id: payloadCanId, units, speed, angle, target, temp,
-        stalled, tuneState, min, max, cal, flags,
+        stalled, tuneState, min, max, cal, flags, activeLow,
         microsteps, stepsPerRev, currentmA, maxRPS, maxRPS2, kp, ki, kd
       };
     }
 
     function parseImuTelemetry(canArbId, u8arr) {
-      // 7 floats = 28 bytes
       if (u8arr.length < 28) return null;
       const dv = new DataView(u8arr.buffer, u8arr.byteOffset, u8arr.byteLength);
 
@@ -1736,7 +1423,7 @@
               }
               renderActive();
               if (!tuneFinished) {
-                // Soft sync - update checkboxes/status without overwriting typed inputs unless needed
+                // Soft sync
                 syncFormFromState(p.id, false);
               }
             }
@@ -1779,253 +1466,477 @@
     devSearch.addEventListener('input', filterList);
     inTarget.addEventListener('input', preview);
 
-    btn0.onclick = () => { inTarget.value = "0"; preview(); };
-    btn90.onclick = () => {
+    function preview() {
+      const v = parseFloat(inTarget.value);
+      if (store.activeId == null) return;
       const st = store.devices.get(store.activeId);
-      const isDeg = (st && st.units === 1);
-      inTarget.value = isDeg ? "90" : (Math.PI / 2).toFixed(3);
-      preview();
-    };
-    btn180.onclick = () => {
-      const st = store.devices.get(store.activeId);
-      const isDeg = (st && st.units === 1);
-      inTarget.value = isDeg ? "180" : Math.PI.toFixed(3);
-      preview();
-    };
+      if (!st) return;
+      const isDeg = (st.units === 1);
+      $("preview").innerText = isNaN(v) ? "" : (v + (isDeg ? "°" : " rad"));
+    }
 
+    /* Motor Actions */
     btnSendTarget.onclick = () => {
-      if (store.activeId === null) return;
-      const st = store.devices.get(store.activeId);
-      if (st && st.type === 'imu') return;
-      sendBytes(frame.target(store.activeId, parseFloat(inTarget.value) || 0));
+      if (store.activeId == null) return;
+      const val = parseFloat(inTarget.value);
+      if (!isNaN(val)) sendBytes(frame.target(store.activeId, val));
     };
     btnSendLimits.onclick = () => {
-      if (store.activeId === null) return;
-      const st = store.devices.get(store.activeId);
-      if (st && st.type === 'imu') return;
-      const id = store.activeId;
-      sendBytes(frame.speed(id, parseFloat(inRps.value) || 0));
-      sendBytes(frame.accel(id, parseFloat(inRps2.value) || 0));
+      if (store.activeId == null) return;
+      const s = parseFloat(inRps.value);
+      const a = parseFloat(inRps2.value);
+      if (!isNaN(s)) sendBytes(frame.speed(store.activeId, s));
+      if (!isNaN(a)) sendBytes(frame.accel(store.activeId, a));
     };
     btnSetCurrent.onclick = () => {
-      if (store.activeId === null) return;
-      const st = store.devices.get(store.activeId);
-      if (st && st.type === 'imu') return;
-      sendBytes(frame.current(store.activeId, parseInt(inmA.value, 10) || 0));
+      if (store.activeId == null) return;
+      const m = parseInt(inmA.value);
+      if (!isNaN(m)) sendBytes(frame.current(store.activeId, m));
     };
     btnCal.onclick = () => {
-      if (store.activeId === null) return;
-      const st = store.devices.get(store.activeId);
-      if (st && st.type === 'imu') return;
-      sendBytes(frame.calibrate(store.activeId));
-    };
-    btnAutoTune.onclick = () => {
-      if (store.activeId === null) return;
-      const st = store.devices.get(store.activeId);
-      if (st && st.type === 'imu') return;
-      sendBytes(frame.autoTune(store.activeId, parseFloat(inTuneMin.value) || 0, parseFloat(inTuneMax.value) || 0));
-      setStatus("Auto-Tune started...");
-    };
-
-    btnImuZero.onclick = () => {
-      if (store.activeId === null) return;
-      const st = store.devices.get(store.activeId);
-      if (st && st.type === 'imu') {
-        sendBytes(frame.resetOrient(store.activeId));
-        logInfo("Sent Zero Orientation to IMU");
+      if (store.activeId == null) return;
+      if (confirm("Calibrate " + store.activeId + "? Motor will move.")) {
+        sendBytes(frame.calibrate(store.activeId));
       }
     };
-
     tglEnable.onchange = () => {
-      if (store.activeId === null) return;
-      const st = store.devices.get(store.activeId);
-      if (st && st.type === 'imu') { tglEnable.checked = false; return; }
+      if (store.activeId == null) return;
       sendBytes(frame.bool1(store.activeId, CMD.SET_ENABLED, tglEnable.checked));
     };
 
-    btnApplyID.onclick = () => {
-      if (store.activeId === null) return;
+    // Quick angles
+    btn0.onclick = () => { inTarget.value = 0; btnSendTarget.click(); };
+    btn90.onclick = () => {
+      if (store.activeId == null) return;
       const st = store.devices.get(store.activeId);
-      const oldId = store.activeId;
-      const nid = clamp11(parseInt(newIdEl.value, 10) || 0);
-      if (nid === oldId) return;
+      inTarget.value = (st && st.units === 1) ? 90 : 1.571;
+      btnSendTarget.click();
+    };
+    btn180.onclick = () => {
+      if (store.activeId == null) return;
+      const st = store.devices.get(store.activeId);
+      inTarget.value = (st && st.units === 1) ? 180 : 3.142;
+      btnSendTarget.click();
+    };
 
-      const isImu = (st && st.type === 'imu');
-      sendBytes(frame.setId(oldId, nid, isImu));
-
-      const dev = store.devices.get(oldId);
-      store.devices.delete(oldId);
-      store.devices.set(nid, dev);
-      const tile = store.tiles.get(oldId);
-      if (tile) {
-        tile.root.dataset.id = String(nid);
-        tile.idtxt.textContent = '0x' + nid.toString(16).toUpperCase();
-        store.tiles.delete(oldId);
-        store.tiles.set(nid, tile);
+    /* Auto Tune */
+    btnAutoTune.onclick = () => {
+      if (store.activeId == null) return;
+      const minA = parseFloat(inTuneMin.value);
+      const maxA = parseFloat(inTuneMax.value);
+      if (isNaN(minA) || isNaN(maxA)) return alert("Invalid angles");
+      if (confirm(`Start Auto-Tune on ID ${store.activeId}? Motor will sweep.`)) {
+        sendBytes(frame.autoTune(store.activeId, minA, maxA));
       }
-      setActive(nid);
     };
 
+    /* Setup Tab */
+    btnApplyID.onclick = () => {
+      if (store.activeId == null) return;
+      const nid = parseInt(newId.value);
+      if (isNaN(nid)) return;
+      const st = store.devices.get(store.activeId);
+      if (confirm(`Change ID from ${store.activeId} to ${nid}?`)) {
+        sendBytes(frame.setId(store.activeId, nid, st.type === 'imu'));
+        // Clear old ID from local store after delay
+        setTimeout(() => {
+          store.devices.delete(store.activeId);
+          setActive(nid);
+        }, 500);
+      }
+    };
     btnApplyStepper.onclick = () => {
-      if (store.activeId === null) return;
-      const st = store.devices.get(store.activeId);
-      if (st && st.type === 'imu') return;
-      const id = store.activeId;
-      sendBytes(frame.microsteps(id, parseInt(msEl.value, 10) || 16));
-      sendBytes(frame.stepsPerRev(id, parseInt(sprEl.value, 10) || 200));
+      if (store.activeId == null) return;
+      const m = parseInt(ms.value);
+      const s = parseInt(spr.value);
+      if (!isNaN(m)) sendBytes(frame.microsteps(store.activeId, m));
+      if (!isNaN(s)) sendBytes(frame.stepsPerRev(store.activeId, s));
     };
 
-    tglUnitsDeg.onchange = () => {
-      if (store.activeId === null) return;
-      const st = store.devices.get(store.activeId);
-      if (st && st.type === 'imu') { tglUnitsDeg.checked = false; return; }
-      sendBytes(frame.bool1(store.activeId, CMD.SET_UNITS, tglUnitsDeg.checked));
-      renderActive();
-    };
-
-    tglStealth.onchange = () => {
-      if (store.activeId === null) return;
-      const st = store.devices.get(store.activeId);
-      if (st && st.type === 'imu') { tglStealth.checked = false; return; }
-      sendBytes(frame.bool1(store.activeId, CMD.SET_STEALTHCHOP, tglStealth.checked));
-    };
-    tglExtEnc.onchange = () => {
-      if (store.activeId === null) return;
-      const st = store.devices.get(store.activeId);
-      if (st && st.type === 'imu') { tglExtEnc.checked = false; return; }
-      sendBytes(frame.bool1(store.activeId, CMD.SET_EXT_ENCODER, tglExtEnc.checked));
-    };
-    tglExtMode.onchange = () => {
-      if (store.activeId === null) return;
-      const st = store.devices.get(store.activeId);
-      if (st && st.type === 'imu') { tglExtMode.checked = false; return; }
-      sendBytes(frame.bool1(store.activeId, CMD.SET_EXT_MODE, tglExtMode.checked));
-    };
-    tglEndstop.onchange = () => {
-      if (store.activeId === null) return;
-      const st = store.devices.get(store.activeId);
-      if (st && st.type === 'imu') { tglEndstop.checked = false; return; }
-      sendBytes(frame.bool1(store.activeId, CMD.SET_ENDSTOP, tglEndstop.checked));
-    };
-    tglEncInvert.onchange = () => {
-      if (store.activeId === null) return;
-      const st = store.devices.get(store.activeId);
-      if (st && st.type === 'imu') { tglEncInvert.checked = false; return; }
-      sendBytes(frame.bool1(store.activeId, CMD.SET_ENC_INVERT, tglEncInvert.checked));
-    };
-    tglDirInvert.onchange = () => {
-      if (store.activeId === null) return;
-      const st = store.devices.get(store.activeId);
-      if (st && st.type === 'imu') { tglDirInvert.checked = false; return; }
-      sendBytes(frame.bool1(store.activeId, CMD.SET_DIR_INVERT, tglDirInvert.checked));
-    };
-    tglExtSPI.onchange = () => {
-      if (store.activeId === null) return;
-      const st = store.devices.get(store.activeId);
-      if (st && st.type === 'imu') { tglExtSPI.checked = false; return; }
-      sendBytes(frame.bool1(store.activeId, CMD.SET_EXT_SPI, tglExtSPI.checked));
-      const dev = store.devices.get(store.activeId);
-      dev.extSpi = tglExtSPI.checked;
-      store.devices.set(store.activeId, dev);
-    };
-    tglLimitActiveLow.onchange = () => {
-      if (store.activeId === null) return;
-      const st = store.devices.get(store.activeId);
-      if (st && st.type === 'imu') { tglLimitActiveLow.checked = false; return; }
-      sendBytes(frame.bool1(store.activeId, CMD.SET_LIMITSWITCH_ACTIVELOW, tglLimitActiveLow.checked));
-    };
+    /* Toggles */
+    tglUnitsDeg.onchange = () => sendBytes(frame.bool1(store.activeId, CMD.SET_UNITS, tglUnitsDeg.checked));
+    tglStealth.onchange = () => sendBytes(frame.bool1(store.activeId, CMD.SET_STEALTHCHOP, tglStealth.checked));
+    tglExtMode.onchange = () => sendBytes(frame.bool1(store.activeId, CMD.SET_EXT_MODE, tglExtMode.checked));
+    tglEncInvert.onchange = () => sendBytes(frame.bool1(store.activeId, CMD.SET_ENC_INVERT, tglEncInvert.checked));
+    tglDirInvert.onchange = () => sendBytes(frame.bool1(store.activeId, CMD.SET_DIR_INVERT, tglDirInvert.checked));
+    tglExtEnc.onchange = () => sendBytes(frame.bool1(store.activeId, CMD.SET_EXT_ENCODER, tglExtEnc.checked));
+    tglEndstop.onchange = () => sendBytes(frame.bool1(store.activeId, CMD.SET_ENDSTOP, tglEndstop.checked));
+    tglLimitActiveLow.onchange = () => sendBytes(frame.bool1(store.activeId, CMD.SET_LIMITSWITCH_ACTIVELOW, tglLimitActiveLow.checked));
 
     btnApplyPID.onclick = () => {
-      if (store.activeId === null) return;
-      const st = store.devices.get(store.activeId);
-      if (st && st.type === 'imu') return;
-      sendBytes(frame.pid(store.activeId, parseFloat(pidKp.value) || 0, parseFloat(pidKi.value) || 0, parseFloat(pidKd.value) || 0));
+      if (store.activeId == null) return;
+      const p = parseFloat(pidKp.value);
+      const i = parseFloat(pidKi.value);
+      const d = parseFloat(pidKd.value);
+      if (!isNaN(p)) sendBytes(frame.pid(store.activeId, p, i, d));
     };
 
-    // UPDATED HOMING SEND: uses new HomingWire fields
-    btnDoHome.onclick = () => {
-      if (store.activeId === null) return;
-      const st = store.devices.get(store.activeId);
-      if (st && st.type === 'imu') return;
+    /* Homing */
+    // UX: handle toggle group
+    const homeModeLimit = $("homeModeLimit");
+    const homeModeSensorless = $("homeModeSensorless");
+    const homeModeHint = $("homeModeHint");
+    const homeCurrentWrap = $("homeCurrentWrap");
+    const homeUseMinWrap = $("homeUseMinWrap");
+    let homingSensorless = false;
 
-      const isSensorless = (homingMode === 'sensorless');
-      const isGlobalActiveLow = tglLimitActiveLow.checked;
+    homeModeLimit.onclick = () => {
+      homingSensorless = false;
+      homeModeLimit.classList.add("active");
+      homeModeLimit.setAttribute("aria-selected", "true");
+      homeModeSensorless.classList.remove("active");
+      homeModeSensorless.setAttribute("aria-selected", "false");
+      homeModeHint.innerHTML = "Uses MIN/MAX endstop inputs. Configure <i>Active Low</i> in Modes & Flags.";
+      homeCurrentWrap.style.display = 'none'; // hide current
+      homeUseMinWrap.style.display = 'flex'; // show direction target
+    };
+    homeModeSensorless.onclick = () => {
+      homingSensorless = true;
+      homeModeSensorless.classList.add("active");
+      homeModeSensorless.setAttribute("aria-selected", "true");
+      homeModeLimit.classList.remove("active");
+      homeModeLimit.setAttribute("aria-selected", "false");
+      homeModeHint.innerHTML = "StallGuard based. <b>Requires Tuning.</b> Ensure 'Homing Current' is low enough to stall safely.";
+      homeCurrentWrap.style.display = 'block'; // show current
+      homeUseMinWrap.style.display = 'none'; // sensorless usually just runs one way? or both? 
+      // Actually standard sensorless homing code provided earlier usually supports dir. 
+      // But let's leave it visible if supported. 
+      homeUseMinWrap.style.display = 'flex';
+    };
+
+    // Init state
+    homeModeLimit.click();
+
+    btnDoHome.onclick = () => {
+      if (store.activeId == null) return;
+      const off = parseFloat(homeOffset.value);
+      const spd = parseFloat(homeSpeed.value);
+      const cur = parseInt(homeCurrent.value);
+      if (isNaN(off) || isNaN(spd)) return;
+
+      const st = store.devices.get(store.activeId);
+      const activeLow = st ? !!st.activeLow : true; // Use detected flag
 
       const params = {
-        useMINTrigger: isSensorless ? 0 : (homeUseMin.checked ? 1 : 0),
-        sensorlessHoming: isSensorless ? 1 : 0,
-        homingCurrent: isSensorless ? (parseInt(homeCurrent.value, 10) || 0) : 0,
-        offset: parseFloat(homeOffset.value) || 0,
-        activeLow: isGlobalActiveLow ? 1 : 0,
-        speed: parseFloat(homeSpeed.value) || 0,
-        direction: homeDirPlus.checked ? 1 : 0
+        useIN1: homeUseMin.checked, // Seek to MIN?
+        sensorless: homingSensorless,
+        cur: isNaN(cur) ? 800 : cur,
+        off: off,
+        activeLow: activeLow,
+        speed: spd,
+        dir: homeDirPlus.checked
       };
-      sendBytes(frame.homing(store.activeId, params));
-    };
 
-    btnSequential.onclick = async () => {
-      const ids = [...store.devices.keys()].sort((a, b) => a - b);
-      const start = clamp11(parseInt(bulkStart.value, 10) || 1);
-      for (let i = 0; i < ids.length; ++i) {
-        const cur = ids[i];
-        const target = clamp11(start + i);
-        const dev = store.devices.get(cur);
-        if (!dev || dev.type === 'imu') continue;
-        if (cur === target) continue;
-
-        await sendBytes(frame.setId(cur, target));
-
-        const st = store.devices.get(cur);
-        store.devices.delete(cur);
-        store.devices.set(target, st);
-        const tile = store.tiles.get(cur);
-        if (tile) {
-          tile.root.dataset.id = String(target);
-          tile.idtxt.textContent = '0x' + target.toString(16).toUpperCase();
-          store.tiles.delete(cur);
-          store.tiles.set(target, tile);
-        }
+      if (confirm(`Home ID ${store.activeId}? Ensure path is clear.`)) {
+        sendBytes(frame.home(store.activeId, params));
       }
-      refreshListDevices();
-      setStatus("Sequential IDs applied.");
     };
 
-    btnClear.onclick = () => logEl.textContent = "";
+    /* Bulk */
+    btnSequential.onclick = async () => {
+      if (!confirm("This will reassign IDs for ALL connected motors sequentially starting from " + bulkStart.value + ". Continue?")) return;
+      let nextId = parseInt(bulkStart.value) || 1;
+      // Heuristic: sort current IDs, then reassign one by one
+      const ids = Array.from(store.devices.keys()).sort((a, b) => a - b);
+      for (const oldId of ids) {
+        if (store.devices.get(oldId).type === 'imu') continue; // Skip IMU
+        await sendBytes(frame.setId(oldId, nextId, false));
+        await new Promise(r => setTimeout(r, 100)); // gap
+        nextId++;
+      }
+      setTimeout(refreshListDevices, 1000);
+    };
+
+    /* IMU Actions */
+    btnImuZero.onclick = () => {
+      if (store.activeId != null) sendBytes(frame.resetOrient(store.activeId));
+    };
+
+    /* Logging */
+    btnClear.onclick = () => log.innerHTML = "";
     btnSave.onclick = () => {
-      const lines = Array.from(logEl.children).map(el => el.textContent);
-      const blob = new Blob([lines.join("\n")], { type: "text/plain" });
+      const blob = new Blob([log.innerText], { type: "text/plain" });
       const url = URL.createObjectURL(blob);
-      const a = document.createElement('a'); a.href = url; a.download = "canlog.txt"; a.click();
-      URL.revokeObjectURL(url);
+      const a = document.createElement("a");
+      a.href = url; a.download = "tercio_log.txt";
+      a.click();
     };
 
     btnExport.onclick = () => {
-      const rows = [["id", "type", "units", "speed", "angle_or_yaw", "temp", "min", "max", "stalled", "cal", "last_seen"]];
-      [...store.devices.keys()].sort((a, b) => a - b).forEach(id => {
-        const s = store.devices.get(id);
-        const type = s.type;
-        if (s.type === 'imu') {
-          const tempVal = s.imuTemp != null ? s.imuTemp : s.temp;
-          rows.push([id, type, "deg", "", s.yaw ?? "", tempVal ?? "", "", "", "", "", s.ts ? new Date(s.ts).toISOString() : ""]);
+      // Export CSV of devices
+      const rows = ["ID,Type,Angle,Speed,Temp,Stalled,Calibrated"];
+      store.devices.forEach(d => {
+        if (d.type === 'imu') {
+          rows.push(`${d.id},IMU,${d.roll.toFixed(2)},-,${d.temp.toFixed(1)},-,-`);
         } else {
-          rows.push([
-            id, type, s.units === 1 ? "deg" : "rad",
-            s.speed ?? "", s.angle ?? "", s.temp ?? "",
-            s.min ?? "", s.max ?? "", s.stalled ? "YES" : "NO", s.cal ? 1 : 0,
-            s.ts ? new Date(s.ts).toISOString() : ""
-          ]);
+          rows.push(`${d.id},Motor,${d.angle.toFixed(2)},${d.speed.toFixed(2)},${d.temp.toFixed(1)},${d.stalled},${d.cal}`);
         }
       });
-      const csv = rows.map(r => r.map(x => String(x)).join(",")).join("\n");
-      const blob = new Blob([csv], { type: "text/csv" });
+      const blob = new Blob([rows.join("\n")], { type: "text/csv" });
       const url = URL.createObjectURL(blob);
-      const a = document.createElement('a'); a.href = url; a.download = "devices.csv"; a.click();
-      URL.revokeObjectURL(url);
+      const a = document.createElement("a");
+      a.href = url; a.download = "devices.csv";
+      a.click();
     };
 
-    // Initial paint
-    renderTable();
-    gate();
+    /* UI Logic */
+    function refreshListDevices() {
+      // Clear map if they want a full refresh? 
+      // Actually, standard behavior is just keep receiving. 
+      // But let's prune old ones (>5s)?
+      const now = Date.now();
+      for (const [id, d] of store.devices) {
+        if (now - d.ts > 5000) store.devices.delete(id);
+      }
+      filterList();
+    }
+
+    function setActive(id) {
+      store.activeId = id;
+      document.querySelectorAll(".dev-item").forEach(el => {
+        el.classList.toggle("active", parseInt(el.dataset.id) === id);
+      });
+      activeId.innerText = id;
+
+      const st = store.devices.get(id);
+      const isImu = st && st.type === 'imu';
+
+      // Show/Hide controls
+      if (isImu) {
+        imuControls.classList.remove("hidden");
+        motorControls.classList.add("hidden");
+        imuTag.classList.remove("hidden");
+        motorUnitsTag.classList.add("hidden");
+        document.querySelectorAll(".motor-specific").forEach(el => el.classList.add("hidden"));
+
+        // Hide calibration warnings for IMU
+        calibWarn.classList.add("hidden");
+        stallWarn.classList.add("hidden");
+
+      } else {
+        imuControls.classList.add("hidden");
+        motorControls.classList.remove("hidden");
+        imuTag.classList.add("hidden");
+        motorUnitsTag.classList.remove("hidden");
+        document.querySelectorAll(".motor-specific").forEach(el => el.classList.remove("hidden"));
+
+        // Restore warnings for Motor
+        if (st) {
+          calibWarn.classList.toggle("hidden", !!st.cal);
+          stallWarn.classList.toggle("hidden", !st.stalled);
+        }
+      }
+
+      gate();
+      syncFormFromState(id, true);
+    }
+
+    function gate() {
+      const gatedEls = document.querySelectorAll('.gated input, .gated select, .gated button, .gated textarea');
+      const st = store.devices.get(store.activeId);
+
+      // No active device → everything disabled, hide banner
+      if (!st) {
+        gatedEls.forEach(el => el.disabled = true);
+        calibWarn.classList.add('hidden');
+        return;
+      }
+
+      // IMU device → no calibration concept
+      if (st.type === 'imu') {
+        gatedEls.forEach(el => el.disabled = true);
+        calibWarn.classList.add('hidden');
+        return;
+      }
+
+      // Motor device: use cal flag from latest telemetry
+      const isCalibrated = !!st.cal;
+
+      gatedEls.forEach(el => {
+        el.disabled = !isCalibrated;
+      });
+
+      // Show warning ONLY when the active device is a motor and not calibrated
+      calibWarn.classList.toggle('hidden', isCalibrated || store.activeId == null);
+    }
+
+    function syncFormFromState(id, hard = false) {
+      const st = store.devices.get(id);
+      if (!st) return;
+
+      if (st.type === 'motor') {
+        activeUnits.innerText = (st.units === 1) ? "deg" : "rad";
+        targetUnits.innerText = (st.units === 1) ? "deg" : "rad";
+
+        // Flags
+        const flags = st.flags || 0;
+        tglUnitsDeg.checked = (st.units === 1);
+        tglStealth.checked = !!(flags & 0x04);
+        tglExtMode.checked = !!(flags & 0x08);
+        tglEndstop.checked = !!(flags & 0x10);
+        tglExtEnc.checked = !!(flags & 0x20);
+
+        tglEncInvert.checked = !!(flags & 0x01);
+        tglDirInvert.checked = !!(flags & 0x02);
+
+        // New ActiveLow mapping (bit 7)
+        tglLimitActiveLow.checked = !!(flags & 0x80);
+
+        if (hard) {
+          // Fields that shouldn't auto-update while typing
+          ms.value = st.microsteps;
+          spr.value = st.stepsPerRev;
+          inRps.value = st.maxRPS;
+          inRps2.value = st.maxRPS2;
+          pidKp.value = st.kp;
+          pidKi.value = st.ki;
+          pidKd.value = st.kd;
+          inmA.value = st.currentmA;
+        }
+
+        stallWarn.classList.toggle("hidden", !st.stalled);
+      }
+    }
+
+    function updateTile(id, st) {
+      // Find or create
+      let el = document.querySelector(`.dev-item[data-id='${id}']`);
+      if (!el) {
+        el = document.createElement("div");
+        el.className = "dev-item";
+        el.dataset.id = id;
+        el.onclick = () => setActive(id);
+        devList.appendChild(el);
+      }
+
+      const isImu = st.type === 'imu';
+      const typeLabel = isImu ? "IMU" : "M";
+
+      let badges = "";
+      if (isImu) {
+        badges = `<span class="tag" style="background:var(--purple);color:#fff">IMU</span>`;
+      } else {
+        if (st.stalled) badges += `<span class="tag warn">STALL</span>`;
+        if (st.min) badges += `<span class=\"tag\">MIN</span>`;
+        if (st.max) badges += `<span class=\"tag\">MAX</span>`;
+        if (!st.cal) badges += `<span class=\"tag warn\">UNCAL</span>`;
+      }
+
+      let info = "";
+      if (isImu) {
+        info = `R:${st.roll.toFixed(1)} P:${st.pitch.toFixed(1)}`;
+      } else {
+        const u = (st.units === 1) ? "°" : "r";
+        info = `${st.angle.toFixed(2)}${u} | ${st.temp.toFixed(0)}°C`;
+      }
+
+      el.innerHTML = `
+        <div style="font-weight:bold; font-size:16px; width:30px; text-align:center">${id}</div>
+        <div>
+           <div class="dev-tags" style="margin-bottom:4px">${badges}</div>
+           <div class="mono" style="font-size:13px; color:var(--muted)">${info}</div>
+        </div>
+        <div style="font-size:20px; color:var(--muted)">›</div>
+      `;
+
+      if (st.stalled) el.classList.add("stalled");
+      else el.classList.remove("stalled");
+    }
+
+    function filterList() {
+      const q = devSearch.value.toLowerCase();
+      document.querySelectorAll(".dev-item").forEach(el => {
+        const id = el.dataset.id;
+        const st = store.devices.get(parseInt(id));
+        const txt = (id + " " + (st ? JSON.stringify(st) : "")).toLowerCase();
+        el.style.display = txt.includes(q) ? "grid" : "none";
+      });
+    }
+
+    function renderActive() {
+      const st = store.devices.get(store.activeId);
+      if (!st) return;
+
+      if (st.type === 'imu') {
+        valRoll.innerText = st.roll.toFixed(2);
+        valPitch.innerText = st.pitch.toFixed(2);
+        valYaw.innerText = st.yaw.toFixed(2);
+        valAx.innerText = st.ax.toFixed(2);
+        valAy.innerText = st.ay.toFixed(2);
+        valAz.innerText = st.az.toFixed(2);
+
+        // 3D Cube
+        const deg2rad = Math.PI / 180;
+        // Simple mapping: Roll -> Z, Pitch -> X, Yaw -> Y for CSS transform?
+        // Depends on frame. Let's try direct map.
+        // CSS rotateX/Y/Z apply in order.
+        imuCube.style.transform = `rotateX(${-st.pitch}deg) rotateY(${st.yaw}deg) rotateZ(${-st.roll}deg)`;
+
+      } else {
+        const u = (st.units === 1) ? "°" : "rad";
+        tlmSpeed.innerText = st.speed.toFixed(2) + " rps";
+        tlmAngle.innerText = st.angle.toFixed(2) + u;
+        tlmTemp.innerText = st.temp.toFixed(1) + "°C";
+        tlmStalled.innerText = st.stalled ? "YES" : "No";
+        tlmStalled.style.color = st.stalled ? "var(--danger)" : "";
+        tlmTune.innerText = TUNESTATES[st.tuneState] || st.tuneState;
+        tlmMin.innerText = st.min ? "HIT" : "-";
+        tlmMax.innerText = st.max ? "HIT" : "-";
+        tlmCal.innerText = st.cal ? "OK" : "No";
+        tlmCal.style.color = st.cal ? "var(--accent)" : "var(--warn)";
+      }
+    }
+
+    // Auto-update table
+    setInterval(renderTable, 500);
+
+    function renderTable() {
+      let html = "";
+      // Sort by ID
+      const ids = Array.from(store.devices.keys()).sort((a, b) => a - b);
+
+      for (const id of ids) {
+        const d = store.devices.get(id);
+        const now = Date.now();
+        const seen = ((now - d.ts) / 1000).toFixed(1) + "s";
+
+        if (d.type === 'imu') {
+          html += `<tr>
+             <td class="mono"><b>${id}</b> <span class="tag" style="background:var(--purple);color:#fff">IMU</span></td>
+             <td>-</td>
+             <td>R: ${d.roll.toFixed(2)}</td>
+             <td>P: ${d.pitch.toFixed(2)}</td>
+             <td>Y: ${d.yaw.toFixed(2)}</td>
+             <td>-</td>
+             <td>-</td>
+             <td>-</td>
+             <td>-</td>
+             <td>-</td>
+             <td class="mono"><small>${seen}</small></td>
+           </tr>`;
+        } else {
+          const u = d.units === 1 ? "deg" : "rad";
+          const stallStyle = d.stalled ? "color:var(--danger);font-weight:bold" : "";
+          const calStyle = d.cal ? "color:var(--accent)" : "color:var(--warn)";
+
+          html += `<tr>
+             <td class="mono"><b>${id}</b></td>
+             <td>${u}</td>
+             <td class="mono">${d.speed.toFixed(2)}</td>
+             <td class="mono">${d.angle.toFixed(2)}</td>
+             <td class="mono">${d.temp.toFixed(1)}</td>
+             <td style="${stallStyle}">${d.stalled ? "YES" : "No"}</td>
+             <td>${TUNESTATES[d.tuneState] || d.tuneState}</td>
+             <td>${d.min ? "ON" : "-"}</td>
+             <td>${d.max ? "ON" : "-"}</td>
+             <td style="${calStyle}">${d.cal ? "Yes" : "No"}</td>
+             <td class="mono"><small>${seen}</small></td>
+           </tr>`;
+        }
+      }
+      tblBodies.innerHTML = html;
+    }
+
   </script>
 </body>
 

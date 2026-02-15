@@ -2,14 +2,10 @@
 #include <Arduino.h>
 #include <cmath>
 
-// -----------------------------------------------------------------------------
-// Initialization
-// -----------------------------------------------------------------------------
 bool StepperHoming::begin(const HomingConfig& cfg)
 {
   _cfg = cfg;
 
-  // Only configure pins if physical switches are used
   if (!_cfg.sensorlessHoming)
   {
     pinMode(cfg.inMinPin, cfg.minActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
@@ -19,23 +15,16 @@ bool StepperHoming::begin(const HomingConfig& cfg)
   return true;
 }
 
-// -----------------------------------------------------------------------------
-// Pin Reading Helper
-// -----------------------------------------------------------------------------
 bool StepperHoming::readPin(uint8_t pin, bool activeLow) const
 {
   const bool rawState = (digitalRead(pin) == HIGH);
   return activeLow ? !rawState : rawState;
 }
 
-// -----------------------------------------------------------------------------
-// Sensor Update
-// -----------------------------------------------------------------------------
 void StepperHoming::update()
 {
   if (_cfg.sensorlessHoming)
   {
-    // Physical pins ignored in sensorless mode
     _minTrig = false;
     _maxTrig = false;
     return;
@@ -45,14 +34,11 @@ void StepperHoming::update()
   _maxTrig = readPin(_cfg.inMaxPin, _cfg.maxActiveLow);
 }
 
-// -----------------------------------------------------------------------------
-// Homing Routine
-// -----------------------------------------------------------------------------
 bool StepperHoming::home(SetVelFn setVel,
                          StopFn stop,
-                         StallFn stallDetected,
-                         Encoder& enc,             // Passed by reference
-                         AxisController& con,      // Passed by reference
+                        BroadcastFn broadcast,
+                         Encoder& enc,
+                         AxisController& con,
                          AxisConfig& axisCfg,
                          SetFn setZero,
                          bool seekToMin)
@@ -60,47 +46,54 @@ bool StepperHoming::home(SetVelFn setVel,
   const uint32_t startTime = millis();
   auto isTimeout = [&]() { return (millis() - startTime) > _cfg.timeoutMs; };
 
-  // Determine velocity direction
-  // seekToMin -> Negative Velocity
-  // !seekToMin -> Positive Velocity
-  const float seekVelocity = seekToMin ? -std::fabs(_cfg.seekSpeed) : std::fabs(_cfg.seekSpeed);
+  const float seekSpeedMag = std::fabs(_cfg.seekSpeed);
+  const float seekVelocity = seekToMin ? -seekSpeedMag : seekSpeedMag;
+  
+  // Start seeking
   setVel(seekVelocity);
 
-  // Stall detection debounce
-  constexpr uint8_t STALL_DEBOUNCE_THRESHOLD = 5;
-  uint8_t stallConsecutiveCount = 0;
+  // Stall detection state
+  const float stallSpeedThreshold = seekSpeedMag * 0.5f;
+  const uint32_t stallDurationMs = 200;
+  uint32_t stallStartTime = 0;
+  bool stallTimerActive = false;
 
-  // --- Phase 1: Seek Limit ---
+  // Wait briefly for acceleration to ramp up before checking stall
+  delay(250); 
+
   while (!isTimeout())
   {
     update();
-    enc.update(0.01); // Simulated dt for encoder update
+    broadcast();
+    enc.update(0.01);
 
     if (_cfg.sensorlessHoming)
     {
-      if (!stallDetected)
-      {
-        stop();
-        return false; // Callback required
-      }
+      float currentVel = std::fabs(enc.velocity(Encoder::Rotations));
 
-      if (stallDetected())
+      if (currentVel < stallSpeedThreshold)
       {
-        if (++stallConsecutiveCount >= STALL_DEBOUNCE_THRESHOLD)
+        if (!stallTimerActive)
+        {
+          stallStartTime = millis();
+          stallTimerActive = true;
+        }
+        else if ((millis() - stallStartTime) >= stallDurationMs)
+        {
           break; // Confirmed stall
+        }
       }
       else
       {
-        stallConsecutiveCount = 0;
+        stallTimerActive = false;
       }
     }
     else
     {
-      // Physical Switch Check
       if ((seekToMin && _minTrig) || (!seekToMin && _maxTrig))
         break;
     }
-
+    
     delay(1);
   }
 
@@ -109,40 +102,37 @@ bool StepperHoming::home(SetVelFn setVel,
   if (isTimeout())
     return false;
 
-  delay(1000); // Settle time
+  delay(500); 
+  
+  float currentPos = enc.angle(Encoder::Radians);
+  float backoffDir = seekToMin ? 1.0f : -1.0f;
+  float backoffTarget = currentPos + (backoffDir * std::fabs(_cfg.backoffOffset));
 
-  // --- Phase 2: Backoff ---
-  enc.update(0.01); // Refresh encoder state
-
-  // Backoff moves opposite to seek direction
-  const double backoffDir = (seekVelocity < 0.0f) ? 1.0 : -1.0;
-  const double backoffTarget = enc.angle(Encoder::Radians) + (backoffDir * std::fabs(_cfg.backoffOffset));
-
-  // Temporarily limit speed for precise backoff
-  const double originalMaxRPS = axisCfg.maxRPS;
-  axisCfg.maxRPS = std::fabs(seekVelocity);
+  // Use position control for backoff
+  float originalMaxRPS = axisCfg.maxRPS;
+  axisCfg.maxRPS = seekSpeedMag; 
 
   con.setTargetAngleRad(backoffTarget);
 
-  // Closed-loop move to backoff position
-  while (true)
+  const uint32_t backoffStart = millis();
+  while ((millis() - backoffStart) < 5000)
   {
+    broadcast();
     enc.update(0.01);
     con.update(0.01);
 
-    const double error = std::fabs(enc.angle(Encoder::Radians) - backoffTarget);
-    if (error < 0.01) // Convergence threshold (radians)
+    float error = std::fabs(enc.angle(Encoder::Radians) - backoffTarget);
+    if (error < 0.01f)
       break;
 
     delay(1);
   }
 
   stop();
-  axisCfg.maxRPS = originalMaxRPS; // Restore config
+  axisCfg.maxRPS = originalMaxRPS;
 
-  // --- Phase 3: Zeroing ---
   setZero(0.0f);
-  con.setTargetAngleRad(0.0);
-
+  con.setTargetAngleRad(0.0f);
+  
   return true;
 }

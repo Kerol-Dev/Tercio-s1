@@ -11,15 +11,16 @@ struct HomingConfig {
   float currentLimit;
   bool minActiveLow;
   bool maxActiveLow;
-  float seekSpeed;        // units/sec toward limit
-  uint32_t timeoutMs;     // safety timeout
-  float backoffOffset;    // distance to move off the switch
+  float seekSpeed;
+  uint32_t timeoutMs;
+  float backoffOffset;
 };
 
 class StepperHoming {
 public:
   using SetVelFn = std::function<void(float)>;  // set velocity
   using StopFn   = std::function<void(void)>;   // stop motor
+  using BroadcastFn   = std::function<void(void)>;   // broadcast can telemetry
   using StallFn  = std::function<bool()>;
   using ReadFn   = std::function<double(void)>;  // read position
   using SetFn    = std::function<void(float)>;  // set position
@@ -27,10 +28,9 @@ public:
   StepperHoming() = default;
   bool begin(const HomingConfig& cfg);
 
-  // Perform homing. Returns true if successful.
   bool home(SetVelFn setVel,
                          StopFn stop,
-                         StallFn stallDetected,
+                         BroadcastFn broadcast,
                          Encoder& enc,            
                          AxisController& con,   
                          AxisConfig& axisCfg,

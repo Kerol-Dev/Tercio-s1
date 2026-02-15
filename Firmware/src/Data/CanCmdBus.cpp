@@ -27,7 +27,7 @@ namespace CanCmdBus
     uint16_t            g_filterId     = 0;
     uint16_t            g_filterMask   = 0;
     uint16_t            g_defaultTxId  = 0;
-    uint8_t             g_rxBuffer[64]; // Static buffer to avoid stack allocation in poll()
+    uint8_t             g_rxBuffer[64];
   }
 
 
@@ -35,7 +35,6 @@ namespace CanCmdBus
   // Internal Helper Functions
   // ---------------------------------------------------------------------------
 
-  // Maps requested payload length to the nearest valid CAN-FD DLC length
   static uint8_t normalizeFdLength(uint8_t length)
   {
     static constexpr uint8_t validLengths[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 12, 16, 20, 24, 32, 48, 64};
@@ -61,15 +60,10 @@ namespace CanCmdBus
   // Checks and recovers from FDCAN hardware error states (Bus Off / Error Passive)
   static void manageHardwareState()
   {
-    // PSR (Protocol Status Register)
     const uint32_t protocolStatus = FDCAN1->PSR;
 
-    // Check for Bus_Off (BO) or Error_Passive (EP) bits
     if (protocolStatus & (FDCAN_PSR_BO | FDCAN_PSR_EP))
     {
-      // Clearing the Error Counter Register (ECR) helps reset error logic
-      // in some manual recovery scenarios, though typically the hardware
-      // auto-recovers after 128 occurrences of 11 consecutive recessive bits.
       FDCAN1->ECR = 0;
     }
   }
@@ -89,7 +83,6 @@ namespace CanCmdBus
     settings.mRxPin = rxPin;
     settings.mTxPin = txPin;
     
-    // Disable automatic retransmission for deterministic behavior in control loops
     settings.mEnableRetransmission = false; 
 
     const uint32_t errorCode = fdcan1.beginFD(settings);
@@ -104,7 +97,6 @@ namespace CanCmdBus
 
   void poll()
   {
-    // Ensure hardware is healthy before attempting reception
     manageHardwareState();
 
     CANFDMessage message;

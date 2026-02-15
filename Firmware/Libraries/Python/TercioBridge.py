@@ -6,17 +6,13 @@ from typing import Optional, Dict, Union
 import serial
 from serial.tools import list_ports
 
-
 HDR_FMT = "<HBB"
 HDR_SIZE = struct.calcsize(HDR_FMT)
 MAX_PAYLOAD = 64
 
-
-# Motor Constants
 TELEMETRY_CMD = 0x01
 GET_CONFIG_CMD = 0x20
 
-# IMU Constants
 IMU_TELEMETRY_CMD = 0x02
 
 
@@ -39,9 +35,8 @@ class Cmd(IntEnum):
     SET_EXT_ENCODER = 0x10
     SET_ACCEL_LIMIT = 0x11
     SET_DIR_INVERT = 0x12
-    SET_EXT_SPI = 0x13
-    DO_AUTO_TUNE = 0x14
-    SET_LIMITSWITCH_ACTIVELOW = 0x15
+    DO_AUTO_TUNE = 0x13
+    SET_LIMITSWITCH_ACTIVELOW = 0x14
     GET_CONFIG = 0x20
     SET_IMU_ID = 0xA1
     RESET_ORIENT = 0xA2
@@ -62,7 +57,6 @@ AXIS_CONFIG_SIZE = struct.calcsize(AXIS_CONFIG_FMT)
 TELEM_TAIL_FMT = "<f f f f B B B B"
 TELEM_TAIL_SIZE = struct.calcsize(TELEM_TAIL_FMT)
 
-# IMU Payload: 7 floats (28 bytes)
 IMU_PAYLOAD_FMT = "<fffffff"
 IMU_PAYLOAD_SIZE = struct.calcsize(IMU_PAYLOAD_FMT)
 
@@ -76,7 +70,6 @@ class AxisFlags:
     enableEndStop: bool
     externalEncoder: bool
     calibratedOnce: bool
-    externalSPI: bool
     limitSwitchActiveLow: bool
 
 
@@ -131,10 +124,9 @@ class HomingParams:
     offset: float = 0.0
     activeLow: bool = True
     speed: float = 1.0
-    direction: bool = True  # True => (+)
+    direction: bool = True
 
 
-# ========= pack helpers =========
 _u8 = lambda v: struct.pack("<B", v & 0xFF)
 _u16 = lambda v: struct.pack("<H", v & 0xFFFF)
 _f32 = lambda v: struct.pack("<f", float(v))
@@ -147,11 +139,8 @@ def _pack_homing(p: HomingParams) -> bytes:
         cur = 0
     if cur > 0xFFFF:
         cur = 0xFFFF
-
-    # fixed name: useIN1Trigger
     use_in1 = 1 if (p.useIN1Trigger and not p.sensorlessHoming) else 0
     active_low = 1 if (p.activeLow and not p.sensorlessHoming) else 0
-
     return struct.pack(
         "<BBHfBfB",
         use_in1,
@@ -172,14 +161,13 @@ def _make_frame(can_id: int, cmd: int, payload: bytes = b"") -> bytes:
     return struct.pack(HDR_FMT, can_id, cmd & 0xFF, len(payload)) + payload
 
 
-# ========= parsing =========
 def _parse_axis_config(b: bytes) -> AxisConfig:
     (
         crc32,
         microsteps,
         stepsPerRev,
         units,
-        flags_u16,      # Changed from flags_u8
+        flags_u16,
         encZeroCounts,
         driver_mA,
         maxRPS,
@@ -198,8 +186,8 @@ def _parse_axis_config(b: bytes) -> AxisConfig:
         enableEndStop=bool(flags_u16 & 0x10),
         externalEncoder=bool(flags_u16 & 0x20),
         calibratedOnce=bool(flags_u16 & 0x40),
-        externalSPI=bool(flags_u16 & 0x80),
-        limitSwitchActiveLow=bool(flags_u16 & 0x100),  # Now valid!
+        # externalSPI removed (was 0x80)
+        limitSwitchActiveLow=bool(flags_u16 & 0x80),  # Moved to 0x80 (128)
     )
 
     return AxisConfig(
@@ -225,11 +213,16 @@ def _parse_telemetry(payload: bytes) -> Optional[AxisState]:
 
     cfg = _parse_axis_config(payload[:AXIS_CONFIG_SIZE])
 
-    (curSpd, curAng, tgtAng, temp, stalled_u8, tuneState_u8, minT_u8, maxT_u8) = (
-        struct.unpack(
-            TELEM_TAIL_FMT,
-            payload[AXIS_CONFIG_SIZE : AXIS_CONFIG_SIZE + TELEM_TAIL_SIZE],
-        )
+    offset = AXIS_CONFIG_SIZE
+    if offset % 4 != 0:
+        offset += (4 - (offset % 4))
+
+    if len(payload) < offset + TELEM_TAIL_SIZE:
+        return None
+
+    curSpd, curAng, tgtAng, temp, stalled_u8, tuneState_u8, minT_u8, maxT_u8 = struct.unpack(
+        TELEM_TAIL_FMT,
+        payload[offset:offset + TELEM_TAIL_SIZE],
     )
 
     return AxisState(
@@ -254,7 +247,6 @@ def _parse_imu_telemetry(payload: bytes) -> Optional[ImuState]:
     return ImuState(roll, pitch, yaw, ax, ay, az, temp)
 
 
-# ========= Bridge =========
 class Bridge:
     def __init__(self, port: Optional[str] = None, baud=115200, timeout=0.05):
         self.port = port
@@ -264,9 +256,6 @@ class Bridge:
         self._rx_buf = bytearray()
         self._stop = threading.Event()
         self._reader: Optional[threading.Thread] = None
-
-        # State stores both Stepper and IMU states
-        # Key: CAN ID (int). Value: AxisState or ImuState
         self._state: Dict[int, Union[AxisState, ImuState]] = {}
         self._lock = threading.Lock()
 
@@ -297,7 +286,6 @@ class Bridge:
         self._reader = None
         self._ser = None
 
-    # ---- writer
     def send(self, can_id: int, cmd: IntEnum | int, payload: bytes = b""):
         if self._ser is None:
             raise RuntimeError("Bridge not open")
@@ -305,7 +293,6 @@ class Bridge:
         self._ser.write(frame)
         self._ser.flush()
 
-    # ---- reader
     def _reader_loop(self):
         ser = self._ser
         if not ser:
@@ -363,7 +350,6 @@ class Bridge:
                     with self._lock:
                         self._state[can_id] = imu_pkt
 
-    # ---- state getters
     def get_state(self, can_id: int) -> Union[AxisState, ImuState, None]:
         with self._lock:
             return self._state.get(can_id)
@@ -371,7 +357,6 @@ class Bridge:
     def request_config(self, can_id: int):
         self.send(can_id, Cmd.GET_CONFIG, b"")
 
-    # ---- high-level command wrappers (id must be provided)
     def set_target_angle(self, can_id: int, angle: float):
         self.send(can_id, Cmd.TARGET_ANGLE, _f32(angle))
 
@@ -417,9 +402,6 @@ class Bridge:
     def set_external_encoder(self, can_id: int, enable: bool):
         self.send(can_id, Cmd.SET_EXT_ENCODER, _b01(enable))
 
-    def set_external_spi(self, can_id: int, enable: bool):
-        self.send(can_id, Cmd.SET_EXT_SPI, _b01(enable))
-
     def set_endstop(self, can_id: int, enable: bool):
         self.send(can_id, Cmd.SET_ENDSTOP, _b01(enable))
 
@@ -443,7 +425,6 @@ class Bridge:
         self.send(can_id, Cmd.RESET_ORIENT, b"")
 
 
-# ========= Friendly Stepper wrapper (pins id) =========
 class Stepper:
     def __init__(self, bridge: Bridge, can_id: int):
         if not (0 <= can_id <= 0x7FF):
@@ -451,7 +432,6 @@ class Stepper:
         self.bridge = bridge
         self.id = can_id
 
-    # convenience
     def request_config(self):
         self.bridge.request_config(self.id)
 
@@ -498,9 +478,6 @@ class Stepper:
     def set_external_encoder(self, on: bool):
         self.bridge.set_external_encoder(self.id, on)
 
-    def set_external_spi(self, on: bool):
-        self.bridge.set_external_spi(self.id, on)
-
     def set_endstop(self, on: bool):
         self.bridge.set_endstop(self.id, on)
 
@@ -523,30 +500,19 @@ class Stepper:
         return None
 
 
-# ========= Friendly IMU wrapper =========
 class IMU:
     def __init__(self, bridge: Bridge, control_id: int = 0x003):
-        """
-        :param bridge: The shared Bridge instance.
-        :param control_id: The CAN ID used to send commands (like Reset) to the IMU. Default 0x003.
-        """
         self.bridge = bridge
         self.control_id = control_id
 
     def reset_orientation(self):
-        """Sends the orientation reset command to the IMU."""
         self.bridge.reset_orientation(self.control_id)
 
     def set_can_id(self, new_id: int):
-        """
-        Sets the CAN ID of the IMU.
-        Note: This changes the ID the IMU listens to for future commands.
-        """
         self.bridge.set_imu_id(self.control_id, new_id)
         self.control_id = new_id & 0x7FF
 
     def get_state(self) -> Optional[ImuState]:
-        """Returns the latest IMU telemetry state (Roll, Pitch, Yaw, Accel, Temp)."""
         st = self.bridge.get_state(self.control_id)
         if isinstance(st, ImuState):
             return st

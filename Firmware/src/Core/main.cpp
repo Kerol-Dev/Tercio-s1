@@ -38,9 +38,8 @@ enum CommandID : uint8_t
   CMD_SET_EXT_ENCODER = 0x10,
   CMD_SET_ACCEL_LIMIT = 0x11,
   CMD_SET_DIR_INVERT = 0x12,
-  CMD_SET_EXT_SPI = 0x13,
-  CMD_AUTO_TUNE = 0x14,
-  CMD_SET_LIMITSWITCH_ACTIVELOW = 0x15,
+  CMD_AUTO_TUNE = 0x13,
+  CMD_SET_LIMITSWITCH_ACTIVELOW = 0x14,
 };
 
 // =============================================================================
@@ -152,6 +151,8 @@ float limitAngleCovered = 0.0f;
 float loopDeltaTime = 0.0f;
 unsigned long lastLoopTime = 0;
 uint16_t preHomingCurrent = 0;
+
+void broadcastTelemetry();
 
 // =============================================================================
 // Utility Functions
@@ -595,7 +596,7 @@ void handleHoming(const CanCmdBus::CmdFrame &frame)
       [&]()
       { stepperControl.stop(); },
       [&]()
-      { return updateStallDetection(), stallContext.detected; },
+      { broadcastTelemetry(); },
       encoder,
       axisController,
       axisConfig,
@@ -624,22 +625,6 @@ void handleSetExternalEncoder(const CanCmdBus::CmdFrame &frame)
   encoder.begin(
       external ? HardwarePins::EXT_I2C_SDA : HardwarePins::I2C_SDA,
       external ? HardwarePins::EXT_I2C_SCL : HardwarePins::I2C_SCL,
-      !axisConfig.externalSPI,
-      HardwarePins::SPI_CS);
-  configStore.save(axisConfig);
-}
-
-void handleSetExternalSPI(const CanCmdBus::CmdFrame &frame)
-{
-  bool useSPI;
-  if (!readBoolPayload(frame.payload, frame.len, 0, useSPI))
-    return;
-
-  axisConfig.externalSPI = useSPI;
-  encoder.begin(
-      HardwarePins::EXT_I2C_SDA,
-      HardwarePins::EXT_I2C_SCL,
-      !axisConfig.externalSPI,
       HardwarePins::SPI_CS);
   configStore.save(axisConfig);
 }
@@ -760,7 +745,6 @@ void setup()
   CanCmdBus::registerHandler(CMD_SET_ENDSTOP, handleSetEndstop);
   CanCmdBus::registerHandler(CMD_SET_EXT_ENCODER, handleSetExternalEncoder);
   CanCmdBus::registerHandler(CMD_SET_DIR_INVERT, handleSetDirectionInvert);
-  CanCmdBus::registerHandler(CMD_SET_EXT_SPI, handleSetExternalSPI);
   CanCmdBus::registerHandler(CMD_AUTO_TUNE, handleAutoTune);
   CanCmdBus::registerHandler(CMD_SET_LIMITSWITCH_ACTIVELOW, handleSetLimitActiveLow);
 
@@ -780,7 +764,6 @@ void setup()
   encoder.begin(
       axisConfig.externalEncoder ? HardwarePins::EXT_I2C_SDA : HardwarePins::I2C_SDA,
       axisConfig.externalEncoder ? HardwarePins::EXT_I2C_SCL : HardwarePins::I2C_SCL,
-      !axisConfig.externalSPI,
       HardwarePins::SPI_CS);
   encoder.setVelAlpha(1);
   encoder.setInvert(axisConfig.encInvert);
