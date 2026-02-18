@@ -697,7 +697,7 @@ void broadcastTelemetry()
   const bool useDegrees = (axisConfig.units == 1);
 
   // packet.currentSpeed = encoder.velocity(useDegrees ? Encoder::Degrees : Encoder::Radians);
-  packet.currentAngle = HAL_RCC_GetSysClockFreq();
+  packet.currentSpeed = HAL_RCC_GetSysClockFreq();
   packet.currentAngle = encoder.angle(useDegrees ? Encoder::Degrees : Encoder::Radians);
   packet.targetAngle = axisController.targetAngleRad() * (useDegrees ? RAD_TO_DEG : 1.0f);
   packet.temperature = sensors.temperatureC();
