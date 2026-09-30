@@ -1,4 +1,4 @@
-// Tests for assets/protocol.js. Run with: node --test tests/
+// Tests for public/assets/protocol.js. Run with: node --test tests/protocol.test.mjs
 //
 // The FIRMWARE_* fixtures are wire bytes produced by the real firmware code:
 // Tercio S1 frame encoders (Protocol.h) framed by the Tercio FD bridge
@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import * as p from '../assets/protocol.js';
+import * as p from '../public/assets/protocol.js';
 
 const bytes = hex => Uint8Array.from(hex.match(/../g).map(h => parseInt(h, 16)));
 
