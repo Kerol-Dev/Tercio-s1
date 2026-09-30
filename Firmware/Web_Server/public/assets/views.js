@@ -66,9 +66,9 @@ export function pageHead({ eyebrow, title, suffix, chips, actions }) {
 }
 
 // ---- Top bar ----------------------------------------------------------------------------
-const THEME_NEXT = { system: 'light', light: 'dark', dark: 'system' };
-const THEME_NAME = { system: 'Theme: match system', light: 'Theme: light', dark: 'Theme: dark' };
-const THEME_ICON = { system: 'monitor', light: 'sun', dark: 'moon' };
+// The theme in effect: an explicit choice, else the operating system's.
+const currentTheme = () =>
+  state.theme === 'light' || state.theme === 'dark' ? state.theme : matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 const UNIT_SHORT = { deg: 'deg', rad: 'rad', turn: 'rev' };
 
 export function renderTopbar(scope) {
@@ -80,10 +80,11 @@ export function renderTopbar(scope) {
       UNIT_SHORT[u.key])));
 
   const theme = document.getElementById('theme-toggle');
-  theme.replaceChildren(icon(THEME_ICON[state.theme]));
-  theme.setAttribute('aria-label', THEME_NAME[state.theme]);
-  theme.title = `${THEME_NAME[state.theme]}. Click to change.`;
-  theme.onclick = () => store.setTheme(THEME_NEXT[state.theme]);
+  const next = currentTheme() === 'dark' ? 'light' : 'dark';
+  theme.replaceChildren(icon(next === 'light' ? 'sun' : 'moon'));
+  theme.setAttribute('aria-label', `Switch to ${next} theme`);
+  theme.title = `Switch to ${next} theme`;
+  theme.onclick = () => store.setTheme(next);
 
   const stopAll = document.getElementById('stop-all');
   stopAll.disabled = !state.bus;

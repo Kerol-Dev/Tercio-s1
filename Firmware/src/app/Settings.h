@@ -28,7 +28,7 @@ struct Settings {
   float maxVelocity = 10.0f;
   float maxAcceleration = 100.0f;
   float kp = 20.0f;
-  float ki = 0.0f;
+  float ki = 0.0f;  
   float kd = 0.0f;
   float positionDeadband = 0.0005f;
   float followingErrorLimit = 0.05f;

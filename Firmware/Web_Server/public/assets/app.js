@@ -109,8 +109,12 @@ if (SerialTransport.supported) {
   navigator.serial.addEventListener('disconnect', () => store.refreshKnownPort());
 }
 
+// Embeds (e.g. on terciolabs.com) can open the panel as ?demo&theme=dark.
+const params = new URLSearchParams(location.search);
+if (params.get('theme') === 'light' || params.get('theme') === 'dark') state.theme = params.get('theme');  // this visit only
 if (state.theme !== 'system') document.documentElement.dataset.theme = state.theme;
 store.refreshKnownPort();
+if (params.has('demo')) store.connectDemo();
 lastSelection = `${state.selected}|${state.tab}`;
 renderChrome();
 renderStage();
