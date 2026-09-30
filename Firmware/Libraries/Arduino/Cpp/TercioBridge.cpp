@@ -1,465 +1,320 @@
-#include "TercioBus.h"
+#include "TercioBridge.h"
+
+#include <string.h>
 
 namespace Tercio {
+namespace {
 
-static const size_t AXIS_CONFIG_SIZE = sizeof(uint32_t) + 2 + 2 + 1 + 2 + 2 + 2 + 4*5 + 2;
-static const size_t TELEM_TAIL_SIZE  = sizeof(float)*4 + 4;   // 4 floats + 4 bytes (B,B,B,B)
-static const size_t IMU_PAYLOAD_SIZE = sizeof(float)*7;
+constexpr uint16_t kBroadcast = 0x000;
+constexpr uint16_t kAdapterId = 0x800;
+constexpr uint8_t kAdapterGetStatus = 0x01, kAdapterResetCounters = 0x02;
+constexpr uint8_t kAdapterStatusSize = 28;
+constexpr uint16_t kFnEvent = 0x080, kFnCommand = 0x100, kFnReply = 0x180, kFnTelemetry = 0x200;
+constexpr uint8_t kNoReply = 0x80;
+constexpr uint8_t kMoveDeferred = 0x01;
+constexpr uint8_t kFrameTelemetry = 0x01, kFrameFault = 0x02;
+constexpr uint8_t kTelemetrySize = 37;
+constexpr double kTwoPi = 6.283185307179586;
 
-static uint32_t millisNow() {
-  return millis();
+template <typename T>
+T readLe(const uint8_t* p) {
+  T value;
+  memcpy(&value, p, sizeof(T));
+  return value;
 }
 
-Bridge::Bridge(Stream& io)
-  : _io(io), _rxLen(0) {
-  memset(_axisUsed, 0, sizeof(_axisUsed));
-  memset(_imuUsed, 0, sizeof(_imuUsed));
+template <typename T>
+uint8_t writeLe(uint8_t* p, T value) {
+  memcpy(p, &value, sizeof(T));
+  return sizeof(T);
 }
 
-uint16_t Bridge::clamp11(uint16_t id) {
-  return id & MAX_CAN_ID;
+// CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF).
+uint16_t crc16(const uint8_t* data, uint8_t length) {
+  uint16_t crc = 0xFFFF;
+  while (length--) {
+    crc ^= uint16_t(*data++) << 8;
+    for (uint8_t bit = 0; bit < 8; ++bit) crc = (crc & 0x8000) ? uint16_t((crc << 1) ^ 0x1021) : uint16_t(crc << 1);
+  }
+  return crc;
 }
 
-void Bridge::poll() {
-  while (_io.available()) {
-    if (_rxLen < RX_BUF_SIZE) {
-      _rxBuf[_rxLen++] = static_cast<uint8_t>(_io.read());
+uint8_t cobsEncode(const uint8_t* in, uint8_t length, uint8_t* out) {
+  uint8_t codeIndex = 0, outIndex = 1, code = 1;
+  for (uint8_t i = 0; i < length; ++i) {
+    if (in[i] == 0) {
+      out[codeIndex] = code;
+      codeIndex = outIndex++;
+      code = 1;
     } else {
-      _rxLen = 0;
+      out[outIndex++] = in[i];
+      if (++code == 0xFF) {
+        out[codeIndex] = code;
+        codeIndex = outIndex++;
+        code = 1;
+      }
     }
   }
-  if (_rxLen >= HDR_SIZE) {
-    processBuf();
-  }
+  out[codeIndex] = code;
+  return outIndex;
 }
 
-void Bridge::sendFrame(uint16_t canId, Cmd cmd, const uint8_t* payload, uint8_t len) {
-  if (canId > MAX_CAN_ID || len > MAX_PAYLOAD_SIZE) return;
-  uint8_t hdr[HDR_SIZE];
-  hdr[0] = uint8_t(canId & 0xFF);
-  hdr[1] = uint8_t((canId >> 8) & 0xFF);
-  hdr[2] = static_cast<uint8_t>(cmd);
-  hdr[3] = len;
-  _io.write(hdr, HDR_SIZE);
-  if (payload && len) _io.write(payload, len);
-  _io.flush();
-}
-
-void Bridge::sendU16(uint16_t canId, Cmd cmd, uint16_t value) {
-  uint8_t b[2];
-  b[0] = uint8_t(value & 0xFF);
-  b[1] = uint8_t((value >> 8) & 0xFF);
-  sendFrame(canId, cmd, b, 2);
-}
-
-void Bridge::sendF32(uint16_t canId, Cmd cmd, float value) {
-  uint8_t b[4];
-  memcpy(b, &value, 4);
-  sendFrame(canId, cmd, b, 4);
-}
-
-void Bridge::sendBool(uint16_t canId, Cmd cmd, bool value) {
-  uint8_t b = value ? 1 : 0;
-  sendFrame(canId, cmd, &b, 1);
-}
-
-void Bridge::processBuf() {
-  size_t idx = 0;
-  while (_rxLen - idx >= HDR_SIZE) {
-    uint16_t canId = uint16_t(_rxBuf[idx]) | (uint16_t(_rxBuf[idx+1]) << 8);
-    uint8_t cmd    = _rxBuf[idx+2];
-    uint8_t len    = _rxBuf[idx+3];
-    size_t total   = HDR_SIZE + len;
-    if (_rxLen - idx < total) break;
-
-    const uint8_t* payload = &_rxBuf[idx + HDR_SIZE];
-
-    if (cmd == TELEMETRY_CMD) {
-      handleTelemetry(canId, payload, len);
-    } else if (cmd == GET_CONFIG_CMD) {
-      handleConfig(canId, payload, len);
-    } else if (cmd == IMU_TELEMETRY_CMD) {
-      handleImuTelemetry(canId, payload, len);
+int cobsDecode(const uint8_t* in, uint8_t length, uint8_t* out) {
+  uint8_t i = 0;
+  int o = 0;
+  while (i < length) {
+    const uint8_t code = in[i++];
+    if (code == 0) return -1;
+    for (uint8_t j = 1; j < code; ++j) {
+      if (i >= length) return -1;
+      out[o++] = in[i++];
     }
-
-    idx += total;
+    if (code != 0xFF && i < length) out[o++] = 0;
   }
-
-  if (idx && idx < _rxLen) {
-    memmove(_rxBuf, _rxBuf + idx, _rxLen - idx);
-  }
-  _rxLen -= idx;
+  return o;
 }
 
-int Bridge::findAxisIndex(uint16_t canId) const {
-  for (size_t i = 0; i < MAX_AXES; ++i) {
-    if (_axisUsed[i] && _axes[i].config.canArbId == canId) return int(i);
-  }
-  return -1;
+}  // namespace
+
+// ---------------------------------------------------------------- Bus --------
+
+void Bus::send(uint16_t canId, uint8_t opcode, const uint8_t* payload, uint8_t length) {
+  if ((canId > 0x7FF && canId != kAdapterId) || length > 63) return;
+  uint8_t packet[2 + 1 + 63 + 2];
+  packet[0] = uint8_t(canId);
+  packet[1] = uint8_t(canId >> 8);
+  packet[2] = opcode;
+  if (length) memcpy(packet + 3, payload, length);
+  const uint16_t crc = crc16(packet, uint8_t(3 + length));
+  packet[3 + length] = uint8_t(crc);
+  packet[4 + length] = uint8_t(crc >> 8);
+  uint8_t encoded[72];
+  const uint8_t size = cobsEncode(packet, uint8_t(5 + length), encoded);
+  encoded[size] = 0;  // delimiter
+  io_.write(encoded, size + 1);
 }
 
-int Bridge::findImuIndex(uint16_t canId) const {
-  (void)canId;
-  for (size_t i = 0; i < MAX_AXES; ++i) {
-    if (_imuUsed[i]) {
-      // Just return first slot for now.
-      return int(i);
+void Bus::poll() {
+  while (io_.available()) {
+    const uint8_t byte = uint8_t(io_.read());
+    if (byte != 0) {  // 0x00 only ever marks the end of a frame
+      if (rxLength_ < sizeof rx_)
+        rx_[rxLength_++] = byte;
+      else
+        rxOverflow_ = true;
+      continue;
     }
-  }
-  return -1;
-}
-
-int Bridge::allocAxisIndex(uint16_t canId) {
-  int idx = findAxisIndex(canId);
-  if (idx >= 0) return idx;
-  for (size_t i = 0; i < MAX_AXES; ++i) {
-    if (!_axisUsed[i]) {
-      _axisUsed[i] = true;
-      _axes[i].config.canArbId = canId;
-      return int(i);
+    uint8_t packet[sizeof rx_];
+    const int size = rxOverflow_ ? -1 : cobsDecode(rx_, rxLength_, packet);
+    const bool empty = rxLength_ == 0 && !rxOverflow_;
+    rxLength_ = 0;
+    rxOverflow_ = false;
+    if (empty) continue;
+    if (size < 5 || size > 5 + 63 || readLe<uint16_t>(packet + size - 2) != crc16(packet, uint8_t(size - 2))) {
+      ++framingErrors_;  // e.g. the tail of a frame from before the port was opened
+      continue;
     }
+    dispatch(readLe<uint16_t>(packet), packet[2], packet + 3, uint8_t(size - 5));
   }
-  return -1;
 }
 
-int Bridge::allocImuIndex(uint16_t canId) {
-  (void)canId;
-  for (size_t i = 0; i < MAX_AXES; ++i) {
-    if (!_imuUsed[i]) {
-      _imuUsed[i] = true;
-      _imus[i].timestampMs = millisNow();
-      return int(i);
-    }
-    // If used, just reuse index 0 for simplicity if we only have one IMU.
-    if (_imuUsed[i] && i == 0) return 0;
-  }
-  return -1;
-}
-
-bool Bridge::parseAxisConfig(const uint8_t* b, size_t len, AxisConfig& out) const {
-  if (len < AXIS_CONFIG_SIZE) return false;
-  size_t o = 0;
-  memcpy(&out.crc32, b + o, 4); o += 4;
-  memcpy(&out.microsteps, b + o, 2); o += 2;
-  memcpy(&out.stepsPerRev, b + o, 2); o += 2;
-  out.units = b[o]; o += 1;
-  uint16_t flags_u16;
-  memcpy(&flags_u16, b + o, 2); o += 2;
-  memcpy(&out.encZeroCounts, b + o, 2); o += 2;
-  memcpy(&out.driver_mA, b + o, 2); o += 2;
-  memcpy(&out.maxRPS,  b + o, 4); o += 4;
-  memcpy(&out.maxRPS2, b + o, 4); o += 4;
-  memcpy(&out.Kp,      b + o, 4); o += 4;
-  memcpy(&out.Ki,      b + o, 4); o += 4;
-  memcpy(&out.Kd,      b + o, 4); o += 4;
-  memcpy(&out.canArbId, b + o, 2); o += 2;
-
-  AxisFlags f;
-  f.encInvert              = (flags_u16 & 0x01) != 0;
-  f.dirInvert              = (flags_u16 & 0x02) != 0;
-  f.stealthChop            = (flags_u16 & 0x04) != 0;
-  f.externalMode           = (flags_u16 & 0x08) != 0;
-  f.enableEndStop          = (flags_u16 & 0x10) != 0;
-  f.externalEncoder        = (flags_u16 & 0x20) != 0;
-  f.calibratedOnce         = (flags_u16 & 0x40) != 0;
-  // bit 0x80 used to be externalSPI, now activeLow
-  f.limitSwitchActiveLow   = (flags_u16 & 0x80) != 0;
-  
-  out.flags = f;
+bool Bus::adapterStatus(AdapterStatus& out) const {
+  if (!adapterSeen_) return false;
+  out = adapter_;
   return true;
 }
 
-bool Bridge::parseAxisTelemetry(const uint8_t* b, size_t len, AxisState& out) const {
-  if (len < AXIS_CONFIG_SIZE + TELEM_TAIL_SIZE) return false;
-
-  if (!parseAxisConfig(b, len, out.config)) return false;
-
-  size_t offset = AXIS_CONFIG_SIZE;
-  if (offset % 4 != 0) offset += (4 - (offset % 4));
-  if (offset + TELEM_TAIL_SIZE > len) return false;
-
-  const uint8_t* p = b + offset;
-  memcpy(&out.currentSpeed, p, 4); p += 4;
-  memcpy(&out.currentAngle, p, 4); p += 4;
-  memcpy(&out.targetAngle,  p, 4); p += 4;
-  memcpy(&out.temperature,  p, 4); p += 4;
-  uint8_t stalled_u8   = *p++;
-  uint8_t tuneState_u8 = *p++;
-  uint8_t minT_u8      = *p++;
-  uint8_t maxT_u8      = *p++;
-
-  out.stalled     = stalled_u8 != 0;
-  out.minTriggered = minT_u8 != 0;
-  out.maxTriggered = maxT_u8 != 0;
-  if (tuneState_u8 <= uint8_t(TuningState::DONE)) {
-    out.tuneState = static_cast<TuningState>(tuneState_u8);
-  } else {
-    out.tuneState = TuningState::IDLE;
+void Bus::dispatch(uint16_t canId, uint8_t opcode, const uint8_t* payload, uint8_t length) {
+  if (canId == kAdapterId) {
+    if ((opcode == kAdapterGetStatus || opcode == kAdapterResetCounters) && length >= kAdapterStatusSize) {
+      adapter_.busState = payload[0];
+      adapter_.txErrorCount = payload[1];
+      adapter_.rxErrorCount = payload[2];
+      adapter_.lastError = payload[3];
+      adapter_.toCan = readLe<uint32_t>(payload + 4);
+      adapter_.fromCan = readLe<uint32_t>(payload + 8);
+      adapter_.droppedToCan = readLe<uint32_t>(payload + 12);
+      adapter_.droppedFromCan = readLe<uint32_t>(payload + 16);
+      adapter_.framingErrors = readLe<uint32_t>(payload + 20);
+      adapter_.busOffEvents = readLe<uint16_t>(payload + 24);
+      adapter_.receivedMs = millis();
+      adapterSeen_ = true;
+    }
+    return;
   }
-  out.timestampMs = millisNow();
-  return true;
+  const uint16_t function = canId & 0x780;
+  const uint8_t node = canId & 0x7F;
+
+  if (function == kFnReply && length >= 1) {
+    if (node == waitNode_ && opcode == waitCmd_) {
+      replyStatus_ = Status(payload[0]);
+      replyLength_ = uint8_t(length - 1 > sizeof replyData_ ? sizeof replyData_ : length - 1);
+      memcpy(replyData_, payload + 1, replyLength_);
+      replied_ = true;
+    }
+  } else if (function == kFnTelemetry && opcode == kFrameTelemetry && length >= kTelemetrySize) {
+    Slot* slot = slotFor(node, true);
+    if (!slot) return;
+    Telemetry& t = slot->telemetry;
+    t.state = AxisState(payload[0]);
+    t.flags = payload[1];
+    t.faults = readLe<uint16_t>(payload + 2);
+    t.warnings = readLe<uint16_t>(payload + 4);
+    t.position = readLe<double>(payload + 6);
+    t.target = readLe<double>(payload + 14);
+    t.velocity = readLe<float>(payload + 22);
+    t.followingError = readLe<float>(payload + 26);
+    t.temperatureC = readLe<int16_t>(payload + 30) / 10.0f;
+    t.supplyV = readLe<uint16_t>(payload + 32) / 1000.0f;
+    t.procedureStep = payload[34];
+    t.sequence = payload[35];
+    t.controlLoadPct = payload[36];
+    t.receivedMs = millis();
+  } else if (function == kFnEvent && opcode == kFrameFault && length >= 5 && onFault_) {
+    onFault_(node, readLe<uint16_t>(payload), readLe<uint16_t>(payload + 2), AxisState(payload[4]));
+  }
 }
 
-bool Bridge::parseImuTelemetry(const uint8_t* b, size_t len, ImuState& out) const {
-  if (len < IMU_PAYLOAD_SIZE) return false;
-  const uint8_t* p = b;
-  memcpy(&out.roll,  p, 4); p += 4;
-  memcpy(&out.pitch, p, 4); p += 4;
-  memcpy(&out.yaw,   p, 4); p += 4;
-  memcpy(&out.ax,    p, 4); p += 4;
-  memcpy(&out.ay,    p, 4); p += 4;
-  memcpy(&out.az,    p, 4); p += 4;
-  memcpy(&out.temp,  p, 4); p += 4;
-  out.timestampMs = millisNow();
-  return true;
+Bus::Slot* Bus::slotFor(uint8_t node, bool create) {
+  Slot* free = nullptr;
+  for (Slot& s : slots_) {
+    if (s.node == node) return &s;
+    if (!free && s.node == 0) free = &s;
+  }
+  if (create && free) free->node = node;
+  return create ? free : nullptr;
 }
 
-void Bridge::handleTelemetry(uint16_t id, const uint8_t* payload, uint8_t len) {
-  AxisState st;
-  if (!parseAxisTelemetry(payload, len, st)) return;
-  int idx = allocAxisIndex(st.config.canArbId);
-  if (idx < 0) return;
-  _axes[idx] = st;
-}
-
-void Bridge::handleConfig(uint16_t id, const uint8_t* payload, uint8_t len) {
-  AxisConfig cfg;
-  if (!parseAxisConfig(payload, len, cfg)) return;
-  int idx = allocAxisIndex(cfg.canArbId);
-  if (idx < 0) return;
-  _axes[idx].config = cfg;
-}
-
-void Bridge::handleImuTelemetry(uint16_t id, const uint8_t* payload, uint8_t len) {
-  ImuState st;
-  if (!parseImuTelemetry(payload, len, st)) return;
-  int idx = allocImuIndex(id);
-  if (idx < 0) return;
-  _imus[idx] = st;
-}
-
-bool Bridge::getAxisState(uint16_t canId, AxisState& out) const {
-  int idx = findAxisIndex(canId);
-  if (idx < 0) return false;
-  out = _axes[idx];
-  return true;
-}
-
-bool Bridge::getImuState(uint16_t canId, ImuState& out) const {
-  (void)canId;
-  for (size_t i = 0; i < MAX_AXES; ++i) {
-    if (_imuUsed[i]) {
-      out = _imus[i];
+bool Bus::telemetry(uint8_t node, Telemetry& out) const {
+  for (const Slot& s : slots_) {
+    if (s.node == node) {
+      out = s.telemetry;
       return true;
     }
   }
   return false;
 }
 
-void Bridge::requestConfig(uint16_t canId) {
-  sendFrame(clamp11(canId), Cmd::GET_CONFIG, nullptr, 0);
+Status Bus::request(uint8_t node, Cmd cmd, const uint8_t* payload, uint8_t length, uint8_t* reply,
+                    uint8_t* replyLength) {
+  waitNode_ = node;
+  waitCmd_ = uint8_t(cmd);
+  replied_ = false;
+  send(kFnCommand + node, uint8_t(cmd), payload, length);
+  const uint32_t start = millis();
+  while (!replied_ && millis() - start < timeoutMs_) poll();
+  waitCmd_ = 0xFF;
+  if (!replied_) return Status::Timeout;
+  if (reply && replyLength) {
+    memcpy(reply, replyData_, replyLength_);
+    *replyLength = replyLength_;
+  }
+  return replyStatus_;
 }
 
-void Bridge::setTargetAngle(uint16_t canId, float angle) {
-  sendF32(clamp11(canId), Cmd::TARGET_ANGLE, angle);
+void Bus::command(uint8_t node, Cmd cmd, const uint8_t* payload, uint8_t length) {
+  send(kFnCommand + node, uint8_t(cmd) | kNoReply, payload, length);
 }
 
-void Bridge::setCurrentMA(uint16_t canId, uint16_t mA) {
-  sendU16(clamp11(canId), Cmd::SET_CURRENT_MA, mA);
+void Bus::stopAll() { send(kBroadcast, uint8_t(Cmd::Stop)); }
+void Bus::emergencyStopAll() { send(kBroadcast, uint8_t(Cmd::EmergencyStop)); }
+void Bus::sync() { send(kBroadcast, uint8_t(Cmd::Sync)); }
+
+// ---------------------------------------------------------------- Stepper ----
+
+double Stepper::scale() const {
+  switch (unit_) {
+    case Unit::Degrees: return 360.0;
+    case Unit::Radians: return kTwoPi;
+    case Unit::Turns: break;
+  }
+  return 1.0;
 }
 
-void Bridge::setSpeedLimitRps(uint16_t canId, float rps) {
-  sendF32(clamp11(canId), Cmd::SET_SPEED_LIMIT, rps);
+Status Stepper::enableBridge(bool on) {
+  const uint8_t value = on ? 1 : 0;
+  return bus_.request(id_, Cmd::Enable, &value, 1);
 }
 
-void Bridge::setAccelLimitRps2(uint16_t canId, float rps2) {
-  sendF32(clamp11(canId), Cmd::SET_ACCEL_LIMIT, rps2);
+Status Stepper::move(Cmd cmd, double value, float velocity, float acceleration, bool deferred, bool ack) {
+  uint8_t p[17];
+  uint8_t n = 0;
+  n += writeLe(p + n, value / scale());
+  n += writeLe(p + n, uint8_t(deferred ? kMoveDeferred : 0));
+  n += writeLe(p + n, float(velocity / scale()));
+  n += writeLe(p + n, float(acceleration / scale()));
+  if (!ack) {
+    bus_.command(id_, cmd, p, n);
+    return Status::Ok;
+  }
+  return bus_.request(id_, cmd, p, n);
 }
 
-void Bridge::setPid(uint16_t canId, float kp, float ki, float kd) {
-  uint8_t b[12];
-  memcpy(b,      &kp, 4);
-  memcpy(b + 4,  &ki, 4);
-  memcpy(b + 8,  &kd, 4);
-  sendFrame(clamp11(canId), Cmd::SET_PID, b, 12);
+Status Stepper::moveTo(double position, float velocity, float acceleration, bool deferred, bool ack) {
+  return move(Cmd::MoveTo, position, velocity, acceleration, deferred, ack);
 }
 
-void Bridge::setCanId(uint16_t canId, uint16_t newId) {
-  sendU16(clamp11(canId), Cmd::SET_ID, clamp11(newId));
+Status Stepper::moveBy(double delta, float velocity, float acceleration, bool deferred, bool ack) {
+  return move(Cmd::MoveBy, delta, velocity, acceleration, deferred, ack);
 }
 
-void Bridge::setMicrosteps(uint16_t canId, uint16_t microsteps) {
-  sendU16(clamp11(canId), Cmd::SET_MICROSTEPS, microsteps);
+Status Stepper::setVelocity(float velocity, float acceleration) {
+  uint8_t p[8];
+  writeLe(p, float(velocity / scale()));
+  writeLe(p + 4, float(acceleration / scale()));
+  return bus_.request(id_, Cmd::SetVelocity, p, sizeof p);
 }
 
-void Bridge::setStealthChop(uint16_t canId, bool enable) {
-  sendBool(clamp11(canId), Cmd::SET_STEALTHCHOP, enable);
+Status Stepper::setZero(double position) {
+  uint8_t p[8];
+  writeLe(p, position / scale());
+  return bus_.request(id_, Cmd::SetZero, p, sizeof p);
 }
 
-void Bridge::setExternalMode(uint16_t canId, bool enable) {
-  sendBool(clamp11(canId), Cmd::SET_EXT_MODE, enable);
+Status Stepper::autoTune(double minimum, double maximum) {
+  uint8_t p[8];
+  writeLe(p, float(minimum / scale()));
+  writeLe(p + 4, float(maximum / scale()));
+  return bus_.request(id_, Cmd::AutoTune, p, sizeof p);
 }
 
-void Bridge::setUnitsDegrees(uint16_t canId, bool useDegrees) {
-  uint8_t v = useDegrees ? 1 : 0;
-  sendFrame(clamp11(canId), Cmd::SET_UNITS, &v, 1);
+Status Stepper::getParam(Param param, uint32_t& value) {
+  uint8_t id = uint8_t(param), reply[8], length = 0;
+  const Status status = bus_.request(id_, Cmd::GetParam, &id, 1, reply, &length);
+  if (status == Status::Ok && length >= 5) value = readLe<uint32_t>(reply + 1);
+  return status;
 }
 
-void Bridge::setEncoderInvert(uint16_t canId, bool enable) {
-  sendBool(clamp11(canId), Cmd::SET_ENC_INVERT, enable);
+Status Stepper::getParam(Param param, float& value) {
+  uint32_t raw = 0;
+  const Status status = getParam(param, raw);
+  memcpy(&value, &raw, 4);
+  return status;
 }
 
-void Bridge::setDirectionInvert(uint16_t canId, bool invert) {
-  sendBool(clamp11(canId), Cmd::SET_DIR_INVERT, invert);
+Status Stepper::setParam(Param param, uint32_t value) {
+  uint8_t p[5] = {uint8_t(param)};
+  writeLe(p + 1, value);
+  return bus_.request(id_, Cmd::SetParam, p, sizeof p);
 }
 
-void Bridge::enableMotor(uint16_t canId, bool enable) {
-  sendBool(clamp11(canId), Cmd::SET_ENABLED, enable);
+Status Stepper::setParam(Param param, float value) {
+  uint32_t raw;
+  memcpy(&raw, &value, 4);
+  return setParam(param, raw);
 }
 
-void Bridge::setStepsPerRev(uint16_t canId, uint16_t stepsPerRev) {
-  sendU16(clamp11(canId), Cmd::SET_STEPS_PER_REV, stepsPerRev);
+Status Stepper::setNodeId(uint8_t newId) {
+  const Status status = setParam(Param::NodeId, uint32_t(newId));
+  if (status == Status::Ok) id_ = newId;
+  return status;
 }
 
-void Bridge::setExternalEncoder(uint16_t canId, bool enable) {
-  sendBool(clamp11(canId), Cmd::SET_EXT_ENCODER, enable);
+bool Stepper::position(double& out) const {
+  Telemetry t;
+  if (!telemetry(t)) return false;
+  out = t.position * scale();
+  return true;
 }
 
-void Bridge::setEndstop(uint16_t canId, bool enable) {
-  sendBool(clamp11(canId), Cmd::SET_ENDSTOP, enable);
-}
-
-void Bridge::setLimitSwitchActiveLow(uint16_t canId, bool activeLow) {
-  sendBool(clamp11(canId), Cmd::SET_LIMITSWITCH_ACTIVELOW, activeLow);
-}
-
-void Bridge::doCalibrate(uint16_t canId) {
-  sendFrame(clamp11(canId), Cmd::DO_CALIBRATE, nullptr, 0);
-}
-
-void Bridge::doHoming(uint16_t canId, const HomingParams& p) {
-  uint16_t cur = p.homingCurrent;
-  if (cur > 0xFFFF) cur = 0xFFFF;
-
-  uint8_t buf[14];
-  uint8_t* b = buf;
-  uint8_t useIn1 = (p.useIN1Trigger && !p.sensorlessHoming) ? 1 : 0;
-  uint8_t sensorless = p.sensorlessHoming ? 1 : 0;
-  uint8_t activeLow = (p.activeLow && !p.sensorlessHoming) ? 1 : 0;
-
-  *b++ = useIn1;
-  *b++ = sensorless;
-  *b++ = uint8_t(cur & 0xFF);
-  *b++ = uint8_t((cur >> 8) & 0xFF);
-  memcpy(b, &p.offset, 4); b += 4;
-  *b++ = activeLow;
-  memcpy(b, &p.speed, 4); b += 4;
-  *b++ = p.direction ? 1 : 0;
-
-  sendFrame(clamp11(canId), Cmd::DO_HOMING, buf, uint8_t(b - buf));
-}
-
-void Bridge::doAutoTune(uint16_t canId, float minAngle, float maxAngle) {
-  uint8_t b[8];
-  memcpy(b,      &minAngle, 4);
-  memcpy(b + 4,  &maxAngle, 4);
-  sendFrame(clamp11(canId), Cmd::DO_AUTO_TUNE, b, 8);
-}
-
-void Bridge::setImuId(uint16_t currentId, uint16_t newId) {
-  sendU16(clamp11(currentId), Cmd::SET_IMU_ID, clamp11(newId));
-}
-
-void Bridge::resetOrientation(uint16_t canId) {
-  sendFrame(clamp11(canId), Cmd::RESET_ORIENT, nullptr, 0);
-}
-
-/* Stepper */
-
-Stepper::Stepper(Bridge& b, uint16_t canId)
-  : _bridge(b), _id(Bridge::clamp11(canId)) {}
-
-void Stepper::setId(uint16_t newId) {
-  _bridge.setCanId(_id, newId);
-  _id = Bridge::clamp11(newId);
-}
-
-void Stepper::requestConfig()            { _bridge.requestConfig(_id); }
-void Stepper::enableMotor(bool en)       { _bridge.enableMotor(_id, en); }
-void Stepper::setTargetAngle(float ang)  { _bridge.setTargetAngle(_id, ang); }
-void Stepper::setCurrentMA(uint16_t mA)  { _bridge.setCurrentMA(_id, mA); }
-void Stepper::setSpeedLimitRps(float rps){ _bridge.setSpeedLimitRps(_id, rps); }
-void Stepper::setAccelLimitRps2(float a) { _bridge.setAccelLimitRps2(_id, a); }
-void Stepper::setPid(float kp,float ki,float kd){ _bridge.setPid(_id,kp,ki,kd); }
-void Stepper::setMicrosteps(uint16_t m)  { _bridge.setMicrosteps(_id, m); }
-void Stepper::setStealthChop(bool en)    { _bridge.setStealthChop(_id, en); }
-void Stepper::setExternalMode(bool en)   { _bridge.setExternalMode(_id, en); }
-void Stepper::setUnitsDegrees(bool on)   { _bridge.setUnitsDegrees(_id, on); }
-void Stepper::setEncoderInvert(bool on)  { _bridge.setEncoderInvert(_id, on); }
-void Stepper::setDirectionInvert(bool on){ _bridge.setDirectionInvert(_id,on); }
-void Stepper::setExternalEncoder(bool on){ _bridge.setExternalEncoder(_id,on);}
-void Stepper::setEndstop(bool on)        { _bridge.setEndstop(_id, on); }
-void Stepper::setLimitSwitchActiveLow(bool a){ _bridge.setLimitSwitchActiveLow(_id,a);}
-void Stepper::doCalibrate()              { _bridge.doCalibrate(_id); }
-void Stepper::doHoming(const HomingParams& p){ _bridge.doHoming(_id, p); }
-void Stepper::doAutoTune(float mn,float mx){ _bridge.doAutoTune(_id,mn,mx); }
-
-bool Stepper::getAxisState(AxisState& out) const {
-  return _bridge.getAxisState(_id, out);
-}
-
-/* IMU */
-
-IMU::IMU(Bridge& b, uint16_t controlId)
-  : _bridge(b), _id(Bridge::clamp11(controlId)) {}
-
-void IMU::setId(uint16_t newId) {
-  _bridge.setImuId(_id, newId);
-  _id = Bridge::clamp11(newId);
-}
-
-void IMU::resetOrientation() {
-  _bridge.resetOrientation(_id);
-}
-
-bool IMU::getState(ImuState& out) const {
-  return _bridge.getImuState(_id, out);
-}
-
-bool IMU::getRoll(float& out) const {
-  ImuState st;
-  if (!getState(st)) return false;
-  out = st.roll; return true;
-}
-bool IMU::getPitch(float& out) const {
-  ImuState st;
-  if (!getState(st)) return false;
-  out = st.pitch; return true;
-}
-bool IMU::getYaw(float& out) const {
-  ImuState st;
-  if (!getState(st)) return false;
-  out = st.yaw; return true;
-}
-bool IMU::getAccelX(float& out) const {
-  ImuState st;
-  if (!getState(st)) return false;
-  out = st.ax; return true;
-}
-bool IMU::getAccelY(float& out) const {
-  ImuState st;
-  if (!getState(st)) return false;
-  out = st.ay; return true;
-}
-bool IMU::getAccelZ(float& out) const {
-  ImuState st;
-  if (!getState(st)) return false;
-  out = st.az; return true;
-}
-bool IMU::getTemperature(float& out) const {
-  ImuState st;
-  if (!getState(st)) return false;
-  out = st.temp; return true;
-}
-
-} // namespace Tercio
+}  // namespace Tercio

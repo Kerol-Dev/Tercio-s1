@@ -1,234 +1,203 @@
 #pragma once
+// -----------------------------------------------------------------------------
+// Tercio host library for Arduino-class boards — CAN protocol v2, adapter
+// serial framing v2.
+//
+// Talks to Tercio S1 drivers through the Tercio FD adapter over any Stream.
+// Serial frames are [id u16][opcode u8][payload][crc16 u16] (little-endian),
+// COBS-encoded and 0x00-terminated; id 0x800 is the adapter itself.
+// No dynamic allocation. Call bus.poll() often (every loop iteration).
+//
+//   Tercio::Bus bus(Serial1);
+//   Tercio::Stepper motor(bus, 1, Tercio::Unit::Degrees);
+//   motor.enable();
+//   motor.moveTo(90.0);
+//
+// Wire contracts: Tercio-s1/Firmware/src/protocol/Protocol.h (CAN) and
+// Tercio-fdcan/Firmware/src/bridge/{Framing,AdapterProtocol}.h (serial).
+// -----------------------------------------------------------------------------
 #include <Arduino.h>
 
 namespace Tercio {
 
-static const uint8_t  TELEMETRY_CMD       = 0x01;
-static const uint8_t  GET_CONFIG_CMD      = 0x20;
-static const uint8_t  IMU_TELEMETRY_CMD   = 0x02;
-
-static const uint16_t MAX_CAN_ID          = 0x7FF;
-static const size_t   MAX_PAYLOAD_SIZE    = 64;
-static const size_t   HDR_SIZE            = 4;   // uint16_t id, uint8_t cmd, uint8_t len
-
 enum class Cmd : uint8_t {
-  TARGET_ANGLE              = 0x01,
-  SET_CURRENT_MA            = 0x02,
-  SET_SPEED_LIMIT           = 0x03,
-  SET_PID                   = 0x04,
-  SET_ID                    = 0x05,
-  SET_MICROSTEPS            = 0x06,
-  SET_STEALTHCHOP           = 0x07,
-  SET_EXT_MODE              = 0x08,
-  SET_UNITS                 = 0x09,
-  SET_ENC_INVERT            = 0x0A,
-  SET_ENABLED               = 0x0B,
-  SET_STEPS_PER_REV         = 0x0C,
-  DO_CALIBRATE              = 0x0D,
-  DO_HOMING                 = 0x0E,
-  SET_ENDSTOP               = 0x0F,
-  SET_EXT_ENCODER           = 0x10,
-  SET_ACCEL_LIMIT           = 0x11,
-  SET_DIR_INVERT            = 0x12,
-  DO_AUTO_TUNE              = 0x13,
-  SET_LIMITSWITCH_ACTIVELOW = 0x14,
-  GET_CONFIG                = 0x20,
-  SET_IMU_ID                = 0xA1,
-  RESET_ORIENT              = 0xA2
+  GetInfo = 0x00, SaveConfig = 0x01, FactoryReset = 0x02, Reboot = 0x03, ClearFaults = 0x04,
+  AssignNodeId = 0x05, GetParam = 0x08, SetParam = 0x09,
+  Enable = 0x10, Stop = 0x11, EmergencyStop = 0x12, MoveTo = 0x13, MoveBy = 0x14,
+  SetVelocity = 0x15, SetZero = 0x16, Sync = 0x17,
+  Calibrate = 0x20, Home = 0x21, AutoTune = 0x22,
 };
 
-enum class TuningState : uint8_t {
-  IDLE      = 0,
-  PREP      = 1,
-  FWD       = 2,
-  BWD       = 3,
-  INCREASE  = 4,
-  DONE      = 5
+enum class Status : uint8_t {
+  Ok = 0, UnknownCommand, BadLength, BadValue, UnknownParam, ReadOnly, Busy,
+  NotCalibrated, Faulted, Disabled, StorageError,
+  Timeout = 0xFF,  // host side: no reply
 };
 
-struct AxisFlags {
-  bool encInvert;
-  bool dirInvert;
-  bool stealthChop;
-  bool externalMode;
-  bool enableEndStop;
-  bool externalEncoder;
-  bool calibratedOnce;
-  bool limitSwitchActiveLow; // moved from externalSPI slot
+enum class AxisState : uint8_t {
+  Disabled = 0, Holding, Moving, Velocity, StepDir, Calibrating, Homing, Tuning, Fault,
 };
 
-struct AxisConfig {
-  uint32_t crc32;
-  uint16_t microsteps;
-  uint16_t stepsPerRev;
-  uint8_t  units;
-  AxisFlags flags;
-  uint16_t encZeroCounts;
-  uint16_t driver_mA;
-  float    maxRPS;
-  float    maxRPS2;
-  float    Kp;
-  float    Ki;
-  float    Kd;
-  uint16_t canArbId;
+enum class Param : uint8_t {
+  NodeId = 0x01, TelemetryRateHz = 0x02, CommandTimeoutMs = 0x03,
+  FullStepsPerRev = 0x10, Microsteps = 0x11, RunCurrentMa = 0x12, HoldCurrentPct = 0x13,
+  StealthChop = 0x14, StealthChopMaxVel = 0x15, InvertDirection = 0x16, GearRatio = 0x17,
+  MaxVelocity = 0x20, MaxAcceleration = 0x21, Kp = 0x22, Ki = 0x23, Kd = 0x24,
+  PositionDeadband = 0x25, FollowingErrorLimit = 0x26, StallTimeoutMs = 0x27,
+  SoftLimitMin = 0x28, SoftLimitMax = 0x29, EnableOnBoot = 0x2A,
+  EncoderType = 0x30, EncoderInvert = 0x31, Calibrated = 0x32,
+  LimitSwitchesEnabled = 0x40, LimitSwitchActiveLow = 0x41, StepDirMode = 0x42, StepDirEnableActiveLow = 0x43,
+  HomingMode = 0x50, HomingVelocity = 0x51, HomingCurrentMa = 0x52, HomingBackoff = 0x53,
+  HomingStallError = 0x54, HomingTimeoutS = 0x55,
+  OverTemperatureC = 0x60,
 };
 
-struct AxisState {
-  AxisConfig   config;
-  float        currentSpeed;
-  float        currentAngle;
-  float        targetAngle;
-  float        temperature;
-  bool         stalled;
-  TuningState  tuneState;
-  bool         minTriggered;
-  bool         maxTriggered;
-  uint32_t     timestampMs;
+namespace fault {
+constexpr uint16_t OverTemperature = 1u << 0, DriverOverTemp = 1u << 1, DriverFault = 1u << 2,
+                   DriverComm = 1u << 3, Encoder = 1u << 4, Stall = 1u << 5, CalibrationFailed = 1u << 6,
+                   HomingFailed = 1u << 7, CommandTimeout = 1u << 8;
+}
+namespace flag {
+constexpr uint8_t Enabled = 1u << 0, Calibrated = 1u << 1, Homed = 1u << 2, Settled = 1u << 3,
+                  LimitMin = 1u << 4, LimitMax = 1u << 5, MovePending = 1u << 6, ExtEnable = 1u << 7;
+}
+
+// Position unit for a Stepper (the wire carries turns).
+enum class Unit : uint8_t { Turns, Degrees, Radians };
+
+// Latest periodic status of one node, in turns.
+struct Telemetry {
+  AxisState state = AxisState::Disabled;
+  uint8_t flags = 0;
+  uint16_t faults = 0;
+  uint16_t warnings = 0;
+  double position = 0.0;
+  double target = 0.0;
+  float velocity = 0.0f;
+  float followingError = 0.0f;
+  float temperatureC = 0.0f;
+  float supplyV = 0.0f;
+  uint8_t procedureStep = 0;
+  uint8_t sequence = 0;
+  uint8_t controlLoadPct = 0;
+  uint32_t receivedMs = 0;
 };
 
-struct ImuState {
-  float    roll;
-  float    pitch;
-  float    yaw;
-  float    ax;
-  float    ay;
-  float    az;
-  float    temp;
-  uint32_t timestampMs;
+// Bus health reported by the adapter every 250 ms.
+struct AdapterStatus {
+  uint8_t busState = 0;  // 0 error-active, 1 warning, 2 error-passive, 3 bus-off
+  uint8_t txErrorCount = 0;
+  uint8_t rxErrorCount = 0;
+  uint8_t lastError = 0;
+  uint32_t toCan = 0;
+  uint32_t fromCan = 0;
+  uint32_t droppedToCan = 0;
+  uint32_t droppedFromCan = 0;
+  uint32_t framingErrors = 0;
+  uint16_t busOffEvents = 0;
+  uint32_t receivedMs = 0;
 };
 
-struct HomingParams {
-  bool  useIN1Trigger = true;
-  bool  sensorlessHoming = false;
-  uint16_t homingCurrent = 1200;
-  float offset = 0.0f;
-  bool  activeLow = true;
-  float speed = 1.0f;
-  bool  direction = true;
-};
+using FaultCallback = void (*)(uint8_t node, uint16_t faults, uint16_t warnings, AxisState state);
 
-class Bridge {
-public:
-  explicit Bridge(Stream& io);
+class Bus {
+ public:
+  explicit Bus(Stream& io, uint32_t timeoutMs = 200) : io_(io), timeoutMs_(timeoutMs) {}
 
+  // Parses everything received so far. Call every loop iteration.
   void poll();
 
-  bool getAxisState(uint16_t canId, AxisState& out) const;
-  bool getImuState(uint16_t canId, ImuState& out) const;
+  void send(uint16_t canId, uint8_t opcode, const uint8_t* payload = nullptr, uint8_t length = 0);
+  // Sends a command and waits (polling) for its reply. `reply` receives the data after the status.
+  Status request(uint8_t node, Cmd cmd, const uint8_t* payload = nullptr, uint8_t length = 0,
+                 uint8_t* reply = nullptr, uint8_t* replyLength = nullptr);
+  // Fire-and-forget: the node only answers if the command fails.
+  void command(uint8_t node, Cmd cmd, const uint8_t* payload = nullptr, uint8_t length = 0);
 
-  void requestConfig(uint16_t canId);
+  // Broadcast helpers.
+  void stopAll();
+  void emergencyStopAll();
+  void sync();  // start moves queued with `deferred`
 
-  void setTargetAngle(uint16_t canId, float angle);
-  void setCurrentMA(uint16_t canId, uint16_t mA);
-  void setSpeedLimitRps(uint16_t canId, float rps);
-  void setAccelLimitRps2(uint16_t canId, float rps2);
-  void setPid(uint16_t canId, float kp, float ki, float kd);
-  void setCanId(uint16_t canId, uint16_t newId);
-  void setMicrosteps(uint16_t canId, uint16_t microsteps);
-  void setStealthChop(uint16_t canId, bool enable);
-  void setExternalMode(uint16_t canId, bool enable);
-  void setUnitsDegrees(uint16_t canId, bool useDegrees);
-  void setEncoderInvert(uint16_t canId, bool enable);
-  void setDirectionInvert(uint16_t canId, bool invert);
-  void enableMotor(uint16_t canId, bool enable);
-  void setStepsPerRev(uint16_t canId, uint16_t stepsPerRev);
-  void setExternalEncoder(uint16_t canId, bool enable);
-  void setEndstop(uint16_t canId, bool enable);
-  void setLimitSwitchActiveLow(uint16_t canId, bool activeLow);
-  void doCalibrate(uint16_t canId);
-  void doHoming(uint16_t canId, const HomingParams& p);
-  void doAutoTune(uint16_t canId, float minAngle, float maxAngle);
-  void setImuId(uint16_t currentId, uint16_t newId);
-  void resetOrientation(uint16_t canId);
+  bool telemetry(uint8_t node, Telemetry& out) const;
+  void onFault(FaultCallback callback) { onFault_ = callback; }
+  // False until the adapter has reported once.
+  bool adapterStatus(AdapterStatus& out) const;
+  uint32_t framingErrors() const { return framingErrors_; }
 
-private:
-  Stream& _io;
-  static const size_t RX_BUF_SIZE = 256;
-  uint8_t _rxBuf[RX_BUF_SIZE];
-  size_t  _rxLen;
+ private:
+  static constexpr uint8_t kMaxNodes = 16;
+  struct Slot {
+    uint8_t node = 0;  // 0 = free
+    Telemetry telemetry;
+  };
 
-  static uint16_t clamp11(uint16_t id);
-  void sendFrame(uint16_t canId, Cmd cmd, const uint8_t* payload, uint8_t len);
-  void sendU16(uint16_t canId, Cmd cmd, uint16_t value);
-  void sendF32(uint16_t canId, Cmd cmd, float value);
-  void sendBool(uint16_t canId, Cmd cmd, bool value);
+  void dispatch(uint16_t canId, uint8_t opcode, const uint8_t* payload, uint8_t length);
+  Slot* slotFor(uint8_t node, bool create);
 
-  void processBuf();
-  void handleTelemetry(uint16_t id, const uint8_t* payload, uint8_t len);
-  void handleConfig(uint16_t id, const uint8_t* payload, uint8_t len);
-  void handleImuTelemetry(uint16_t id, const uint8_t* payload, uint8_t len);
+  Stream& io_;
+  uint32_t timeoutMs_;
+  uint8_t rx_[72] = {};  // one COBS-encoded frame (max 69 bytes)
+  uint8_t rxLength_ = 0;
+  bool rxOverflow_ = false;
+  uint32_t framingErrors_ = 0;
+  AdapterStatus adapter_{};
+  bool adapterSeen_ = false;
+  Slot slots_[kMaxNodes];
+  FaultCallback onFault_ = nullptr;
 
-  bool parseAxisConfig(const uint8_t* b, size_t len, AxisConfig& out) const;
-  bool parseAxisTelemetry(const uint8_t* b, size_t len, AxisState& out) const;
-  bool parseImuTelemetry(const uint8_t* b, size_t len, ImuState& out) const;
-
-  static const size_t MAX_AXES = 16;
-  AxisState _axes[MAX_AXES];
-  ImuState  _imus[MAX_AXES];
-  bool      _axisUsed[MAX_AXES];
-  bool      _imuUsed[MAX_AXES];
-
-  int findAxisIndex(uint16_t canId) const;
-  int findImuIndex(uint16_t canId) const;
-  int allocAxisIndex(uint16_t canId);
-  int allocImuIndex(uint16_t canId);
+  // Reply being waited for.
+  uint8_t waitNode_ = 0;
+  uint8_t waitCmd_ = 0xFF;
+  bool replied_ = false;
+  Status replyStatus_ = Status::Ok;
+  uint8_t replyData_[62] = {};
+  uint8_t replyLength_ = 0;
 };
 
 class Stepper {
-public:
-  Stepper(Bridge& b, uint16_t canId);
+ public:
+  Stepper(Bus& bus, uint8_t nodeId, Unit unit = Unit::Degrees) : bus_(bus), id_(nodeId), unit_(unit) {}
 
-  uint16_t id() const { return _id; }
-  void setId(uint16_t newId);
+  uint8_t id() const { return id_; }
 
-  void requestConfig();
-  void enableMotor(bool en);
-  void setTargetAngle(float ang);
-  void setCurrentMA(uint16_t mA);
-  void setSpeedLimitRps(float rps);
-  void setAccelLimitRps2(float rps2);
-  void setPid(float kp, float ki, float kd);
-  void setMicrosteps(uint16_t m);
-  void setStealthChop(bool en);
-  void setExternalMode(bool en);
-  void setUnitsDegrees(bool on);
-  void setEncoderInvert(bool on);
-  void setDirectionInvert(bool on);
-  void setExternalEncoder(bool on);
-  void setEndstop(bool on);
-  void setLimitSwitchActiveLow(bool activeLow);
-  void doCalibrate();
-  void doHoming(const HomingParams& p);
-  void doAutoTune(float minAngle, float maxAngle);
+  // System
+  Status save() { return bus_.request(id_, Cmd::SaveConfig); }
+  Status clearFaults() { return bus_.request(id_, Cmd::ClearFaults); }
+  Status reboot() { return bus_.request(id_, Cmd::Reboot); }
+  Status getParam(Param param, float& value);
+  Status getParam(Param param, uint32_t& value);
+  Status setParam(Param param, float value);
+  Status setParam(Param param, uint32_t value);
+  Status setNodeId(uint8_t newId);  // applied immediately; call save() to keep it
 
-  bool getAxisState(AxisState& out) const;
+  // Motion (positions in this stepper's unit; velocity/acceleration 0 = use the limits)
+  Status enable() { return enableBridge(true); }
+  Status disable() { return enableBridge(false); }
+  Status stop() { return bus_.request(id_, Cmd::Stop); }
+  Status emergencyStop() { return bus_.request(id_, Cmd::EmergencyStop); }
+  Status moveTo(double position, float velocity = 0, float acceleration = 0, bool deferred = false, bool ack = true);
+  Status moveBy(double delta, float velocity = 0, float acceleration = 0, bool deferred = false, bool ack = true);
+  Status setVelocity(float velocity, float acceleration = 0);
+  Status setZero(double position = 0.0);
 
-private:
-  Bridge&  _bridge;
-  uint16_t _id;
+  // Procedures (return once started; watch telemetry().state)
+  Status calibrate() { return bus_.request(id_, Cmd::Calibrate); }
+  Status home() { return bus_.request(id_, Cmd::Home); }
+  Status autoTune(double minimum, double maximum);
+
+  // Status
+  bool telemetry(Telemetry& out) const { return bus_.telemetry(id_, out); }
+  bool position(double& out) const;
+
+ private:
+  Status enableBridge(bool on);
+  Status move(Cmd cmd, double value, float velocity, float acceleration, bool deferred, bool ack);
+  double scale() const;
+
+  Bus& bus_;
+  uint8_t id_;
+  Unit unit_;
 };
 
-class IMU {
-public:
-  IMU(Bridge& b, uint16_t controlId = 0x003);
-
-  uint16_t id() const { return _id; }
-  void setId(uint16_t newId);
-
-  void resetOrientation();
-  bool getState(ImuState& out) const;
-
-  bool getRoll(float& out) const;
-  bool getPitch(float& out) const;
-  bool getYaw(float& out) const;
-  bool getAccelX(float& out) const;
-  bool getAccelY(float& out) const;
-  bool getAccelZ(float& out) const;
-  bool getTemperature(float& out) const;
-
-private:
-  Bridge&  _bridge;
-  uint16_t _id;
-};
-
-} // namespace Tercio
+}  // namespace Tercio

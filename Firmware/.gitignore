@@ -5,3 +5,5 @@
 .vscode/ipch
 .Tercio-Stepper.code-workspace
 .test.py
+__pycache__/
+*.pyc

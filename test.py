@@ -1,11 +1,11 @@
-from Firmware.Libraries.Python.TercioBridge import Bridge, Stepper
+"""Prints the live position of node 1 (protocol v2)."""
+import time
 
+from Firmware.Libraries.Python.TercioBridge import Bus, Stepper
 
-bridge = Bridge()
-bridge.open()
-
-stepper = Stepper(bridge, 1)
-
-while True:
-    if(stepper.get_axis_state() is not None):
-        print(stepper.get_axis_state().currentAngle)
+with Bus() as bus:
+    stepper = Stepper(bus, 1)
+    while True:
+        if stepper.position is not None:
+            print(f"{stepper.position:.2f}°  {stepper.telemetry.state.name}")
+        time.sleep(0.05)
