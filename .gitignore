@@ -1,0 +1,12 @@
+# macOS Finder metadata
+.DS_Store
+
+# Product film: renders, audio, tools and node_modules stay local
+Marketing/demo-video/
+*.mp4
+*.mov
+*.m4v
+*.webm
+
+# Local Claude Code configuration (dev-server previews with machine paths)
+.claude/
