@@ -9,9 +9,9 @@
 A magnetic encoder, a 20 kHz position loop and CAN FD on one 38 × 38 mm board.<br>
 Drive it from your browser, from Python, from Arduino, or from the step/dir controller you already have.
 
-[Website](https://terciolabs.kerol-kerem.workers.dev) ·
-[Documentation](https://tercio-docs.kerol-kerem.workers.dev) ·
-[Tercio Control](https://tercio-control.pages.dev) ·
+[Website](https://terciolabs.com) ·
+[Documentation](https://docs.terciolabs.com) ·
+[Tercio Control](https://control.terciolabs.com) ·
 [Libraries](#software)
 
 ![MCU](https://img.shields.io/badge/MCU-STM32G431_·_170_MHz-111317?style=flat-square)
@@ -19,7 +19,7 @@ Drive it from your browser, from Python, from Arduino, or from the step/dir cont
 ![Bus](https://img.shields.io/badge/bus-CAN_FD_·_2.5_Mbit%2Fs-2f5be6?style=flat-square)
 ![Build](https://img.shields.io/badge/build-PlatformIO-f5822a?style=flat-square)
 
-**Launching December 1, 2026** · [Join the waitlist →](https://terciolabs.kerol-kerem.workers.dev)
+**Launching December 1, 2026** · [Join the waitlist →](https://terciolabs.com)
 
 </div>
 
@@ -95,7 +95,10 @@ flowchart LR
     FD -- "CAN FD" --> N1["S1 · node 1"]
     N1 --- N2["S1 · node 2"]
     N2 --- N3["S1 · … node 127"]
+    N3 --- IMU["Tercio IMU · node 100"]
 ```
+
+The [Tercio IMU](https://docs.terciolabs.com/imu/overview/) shares the bus: a BNO055 orientation sensor that streams a quaternion and roll, pitch and yaw at up to 100 Hz on the same protocol, and shows up in Tercio Control and the libraries next to the drivers.
 
 | Tercio FD | |
 |---|---|
@@ -108,11 +111,11 @@ flowchart LR
 
 1. **Mount.** Fit the diametric magnet to the motor's rear shaft and bolt the S1 on top, encoder over the magnet.
 2. **Wire.** Motor to the motor terminal, 12–28 V to the power terminal, and CAN to the Tercio FD.
-3. **Connect.** Plug the FD into USB-C and open [Tercio Control](https://tercio-control.pages.dev) in Chrome or Edge. No hardware yet? Press *Try the demo*.
+3. **Connect.** Plug the FD into USB-C and open [Tercio Control](https://control.terciolabs.com) in Chrome or Edge. No hardware yet? Press *Try the demo*.
 4. **Calibrate and move.** Run the encoder calibration once, then jog, home or auto-tune the axis from the panel.
 5. **Script it.** Use the Python or Arduino library below.
 
-The full guide, pinouts and the protocol reference are in the [documentation](https://tercio-docs.kerol-kerem.workers.dev).
+The full guide, pinouts and the protocol reference are in the [documentation](https://docs.terciolabs.com).
 
 ## Software
 
@@ -123,7 +126,8 @@ The full guide, pinouts and the protocol reference are in the [documentation](ht
 A browser app for setup, tuning and live monitoring. It uses Web Serial, so there is nothing to install. It finds every motor on the bus and lets you:
 - calibrate, home and auto-tune each axis;
 - start moves on several axes at the same instant;
-- watch bus health on the adapter.
+- watch bus health on the adapter;
+- see a Tercio IMU's attitude live, calibrate it and zero it.
 
 The source is in [`Firmware/Web_Server`](Firmware/Web_Server): plain ES modules with no build step.
 
@@ -147,7 +151,8 @@ It also covers:
 - `calibrate()`, `home()` and `auto_tune(minimum, maximum)`;
 - `set_current()`, `set_microsteps()`, `set_limits()` and `set_pid()`;
 - deferred moves started together with `bus.sync()`;
-- adapter status and bus-wide stop / emergency stop.
+- adapter status and bus-wide stop / emergency stop;
+- the Tercio IMU: `Imu(bus)` for attitude telemetry, zeroing and calibration.
 
 ### Arduino C++
 
@@ -213,7 +218,7 @@ Github_Files/Images/  images used in this README
 
 ## Availability
 
-Tercio S1 and Tercio FD launch on **December 1, 2026**. [Join the waitlist](https://terciolabs.kerol-kerem.workers.dev) to hear first.
+Tercio S1 and Tercio FD launch on **December 1, 2026**. [Join the waitlist](https://terciolabs.com) to hear first.
 
 ## License
 
@@ -223,5 +228,5 @@ Tercio S1 and Tercio FD launch on **December 1, 2026**. [Join the waitlist](http
 
 <div align="center">
 <br>
-<sub>Made by <a href="https://terciolabs.kerol-kerem.workers.dev">Tercio Labs</a></sub>
+<sub>Made by <a href="https://terciolabs.com">Tercio Labs</a></sub>
 </div>

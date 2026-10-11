@@ -12,7 +12,9 @@ constexpr uint8_t kAdapterStatusSize = 28;
 constexpr uint16_t kFnEvent = 0x080, kFnCommand = 0x100, kFnReply = 0x180, kFnTelemetry = 0x200;
 constexpr uint8_t kNoReply = 0x80;
 constexpr uint8_t kMoveDeferred = 0x01;
-constexpr uint8_t kFrameTelemetry = 0x01, kFrameFault = 0x02;
+constexpr uint8_t kFrameTelemetry = 0x01, kFrameFault = 0x02, kFrameImu = 0x03;
+constexpr uint8_t kImuTelemetrySize = 62;
+constexpr uint8_t kImuZero = 0x30, kImuClearZero = 0x31, kImuSaveCalibration = 0x32;
 constexpr uint8_t kTelemetrySize = 37;
 constexpr double kTwoPi = 6.283185307179586;
 
@@ -170,6 +172,35 @@ void Bus::dispatch(uint16_t canId, uint8_t opcode, const uint8_t* payload, uint8
     t.sequence = payload[35];
     t.controlLoadPct = payload[36];
     t.receivedMs = millis();
+  } else if (function == kFnTelemetry && opcode == kFrameImu && length >= kImuTelemetrySize) {
+    ImuSlot* slot = nullptr;
+    for (ImuSlot& s : imuSlots_) {
+      if (s.node == node) slot = &s;
+      else if (!slot && s.node == 0) slot = &s;
+    }
+    if (!slot) return;
+    slot->node = node;
+    ImuTelemetry& t = slot->telemetry;
+    t.state = payload[0];
+    t.flags = payload[1];
+    t.faults = readLe<uint16_t>(payload + 2);
+    t.warnings = readLe<uint16_t>(payload + 4);
+    const uint8_t c = payload[6];
+    t.calSystem = c >> 6;
+    t.calGyro = (c >> 4) & 3;
+    t.calAccel = (c >> 2) & 3;
+    t.calMag = c & 3;
+    t.sequence = payload[7];
+    for (uint8_t i = 0; i < 4; ++i) t.quaternion[i] = readLe<float>(payload + 8 + 4 * i);
+    t.roll = readLe<float>(payload + 24);
+    t.pitch = readLe<float>(payload + 28);
+    t.yaw = readLe<float>(payload + 32);
+    for (uint8_t i = 0; i < 3; ++i) {
+      t.acceleration[i] = readLe<float>(payload + 36 + 4 * i);
+      t.rate[i] = readLe<float>(payload + 48 + 4 * i);
+    }
+    t.temperatureC = readLe<int16_t>(payload + 60) / 10.0f;
+    t.receivedMs = millis();
   } else if (function == kFnEvent && opcode == kFrameFault && length >= 5 && onFault_) {
     onFault_(node, readLe<uint16_t>(payload), readLe<uint16_t>(payload + 2), AxisState(payload[4]));
   }
@@ -187,6 +218,16 @@ Bus::Slot* Bus::slotFor(uint8_t node, bool create) {
 
 bool Bus::telemetry(uint8_t node, Telemetry& out) const {
   for (const Slot& s : slots_) {
+    if (s.node == node) {
+      out = s.telemetry;
+      return true;
+    }
+  }
+  return false;
+}
+
+bool Bus::imuTelemetry(uint8_t node, ImuTelemetry& out) const {
+  for (const ImuSlot& s : imuSlots_) {
     if (s.node == node) {
       out = s.telemetry;
       return true;
@@ -315,6 +356,32 @@ bool Stepper::position(double& out) const {
   if (!telemetry(t)) return false;
   out = t.position * scale();
   return true;
+}
+
+// ---------------------------------------------------------------- Imu --------
+
+Status Imu::zero(bool headingOnly) {
+  const uint8_t mode = headingOnly ? 1 : 0;
+  return bus_.request(id_, Cmd(kImuZero), &mode, 1);
+}
+
+Status Imu::clearZero() { return bus_.request(id_, Cmd(kImuClearZero)); }
+
+Status Imu::saveCalibration() { return bus_.request(id_, Cmd(kImuSaveCalibration)); }
+
+Status Imu::getParam(ImuParam param, uint32_t& value) {
+  uint8_t id = uint8_t(param), reply[8], length = 0;
+  const Status status = bus_.request(id_, Cmd::GetParam, &id, 1, reply, &length);
+  if (status == Status::Ok && length >= 5) value = readLe<uint32_t>(reply + 1);
+  return status;
+}
+
+Status Imu::setParam(ImuParam param, uint32_t value) {
+  uint8_t p[5] = {uint8_t(param)};
+  writeLe(p + 1, value);
+  const Status status = bus_.request(id_, Cmd::SetParam, p, sizeof p);
+  if (status == Status::Ok && param == ImuParam::NodeId) id_ = uint8_t(value);
+  return status;
 }
 
 }  // namespace Tercio

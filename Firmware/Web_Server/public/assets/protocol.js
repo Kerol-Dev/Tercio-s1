@@ -1,8 +1,9 @@
 // -----------------------------------------------------------------------------
 // Tercio protocol for the browser: CAN protocol v2 (Tercio-s1
-// Firmware/src/protocol/Protocol.h) and adapter serial framing v2 (Tercio-fdcan
-// Firmware/src/bridge/{Framing,AdapterProtocol}.h). Pure module, no DOM — also
-// imported by the Node tests. Keep in sync with those headers.
+// Firmware/src/protocol/Protocol.h, and Tercio-imu's for the IMU additions) and
+// adapter serial framing v2 (Tercio-fdcan Firmware/src/bridge/{Framing,
+// AdapterProtocol}.h). Pure module, no DOM — also imported by the Node tests.
+// Keep in sync with those headers.
 //
 // Units: the wire carries turns (revolutions of the encoder shaft), turns/s
 // and turns/s². Conversion to degrees or radians happens at the UI edge.
@@ -21,6 +22,10 @@ export const NO_REPLY = 0x80;
 export const MOVE_DEFERRED = 0x01;
 export const FRAME_TELEMETRY = 0x01;
 export const FRAME_FAULT = 0x02;
+export const FRAME_IMU = 0x03;
+
+// Device class, the last byte of GetInfo (a 20-byte reply means a Tercio S1).
+export const DEVICE = Object.freeze({ S1: 0, Imu: 1 });
 export const TERCIO_FD_USB = { usbVendorId: 0x1209, usbProductId: 0x0011 };
 
 export const Cmd = Object.freeze({
@@ -319,17 +324,18 @@ export function parseTelemetry(payload) {
 
 const hex = bytes => Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
 
-export const INFO_SIZE = 20;
+export const INFO_SIZE = 20;  // 21 with the device class
 export function parseInfo(data) {
   if (data.length < INFO_SIZE) return null;
   return {
     protocol: data[0],
     firmware: `${data[1]}.${data[2]}.${data[3]}`,
     hardwareRevision: data[4],
-    encoderType: data[5],
+    encoderType: data[5],  // device-specific: the S1's encoder, the IMU's fusion mode
     nodeId: data[6],
     crystalClock: (data[7] & 1) !== 0,
     uid: hex(data.subarray(8, 20)),
+    device: data.length > 20 ? data[20] : DEVICE.S1,
   };
 }
 
@@ -404,12 +410,62 @@ export function uidBytes(uidHex) {
   return Uint8Array.from(uidHex.match(/../g).map(h => parseInt(h, 16)));
 }
 
-// Tercio IMU module (its own, older protocol).
-export function parseImu(payload) {
-  if (payload.length < 28) return null;
+// ---- Tercio IMU (Tercio-imu Firmware/src/protocol/Protocol.h) ----------------------------
+export const DEFAULT_IMU_NODE = 100;
+export const ImuCmd = Object.freeze({ Zero: 0x30, ClearZero: 0x31, SaveCalibration: 0x32 });
+export const ZERO_ALL = 0;
+export const ZERO_HEADING = 1;
+
+export const ImuState = Object.freeze({ Starting: 0, Running: 1, Fault: 2 });
+export const IMU_STATE_INFO = {
+  0: { name: 'Starting', tone: 'busy' },
+  1: { name: 'Running', tone: 'good' },
+  2: { name: 'Sensor fault', tone: 'bad' },
+};
+
+export const IMU_FAULTS = [
+  { bit: 1 << 0, name: 'Sensor not responding', hard: true, help: 'The BNO055 stopped answering. The IMU keeps retrying; check the board if it does not come back.' },
+  { bit: 1 << 1, name: 'Sensor error', hard: true, help: 'The BNO055 reported a system error and was restarted.' },
+  { bit: 1 << 2, name: 'Sensor self-test failed', hard: true, help: 'The BNO055 failed its power-on self-test. Restart the IMU; if it persists, the sensor is damaged.' },
+];
+export const IMU_WARNINGS = [
+  { bit: 1 << 0, name: 'Not calibrated' },
+  { bit: 1 << 5, name: 'CAN errors' },
+  { bit: 1 << 7, name: 'Saving settings failed' },
+];
+export const IMU_FLAGS = { zeroed: 1, zeroHeadingOnly: 2, calibrationStored: 4, magnetometer: 8, calibrated: 16 };
+
+export const FUSION_MODES = ['IMU: accelerometer and gyroscope', 'NDOF: adds the magnetometer'];
+export const AXIS_MAPS = ['P0', 'P1 (sensor default)', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7'];
+
+export const IMU_PARAMS = [
+  { id: 0x70, key: 'fusionMode', label: 'Fusion mode', type: 'u8', kind: 'select', options: FUSION_MODES.map((label, value) => ({ value, label })), access: 'always', help: 'IMU mode ignores the magnetometer, so motors and steel nearby cannot disturb it; heading is relative. NDOF gives an absolute heading in a clean magnetic environment.' },
+  { id: 0x71, key: 'axisMap', label: 'Mounting', type: 'u8', kind: 'select', options: AXIS_MAPS.map((label, value) => ({ value, label })), access: 'always', help: 'How the sensor chip is mounted: the BNO055 placements P0–P7. Change it so the axes match your machine.' },
+  { id: 0x02, key: 'telemetryRateHz', label: 'Telemetry rate', type: 'u16', kind: 'plain', unit: 'Hz', min: 0, max: 100, access: 'always', help: 'How often the IMU reports. The sensor fuses at 100 Hz.' },
+  { id: 0x01, key: 'nodeId', label: 'Node ID', type: 'u8', kind: 'plain', unit: '', min: 1, max: MAX_NODE_ID, access: 'always', help: 'Unique on the bus, motors included. Takes effect immediately.' },
+];
+export const IMU_PARAM_DEFAULTS = { fusionMode: 0, axisMap: 1, telemetryRateHz: 50, nodeId: DEFAULT_IMU_NODE };
+export const IMU_PARAM_BY_KEY = new Map(IMU_PARAMS.map(p => [p.key, p]));
+
+export const IMU_TELEMETRY_SIZE = 62;
+export function parseImuTelemetry(payload) {
+  if (payload.length < IMU_TELEMETRY_SIZE) return null;
   const v = view(payload);
-  const f = i => v.getFloat32(i * 4, true);
-  return { roll: f(0), pitch: f(1), yaw: f(2), ax: f(3), ay: f(4), az: f(5), temperature: f(6) };
+  const f = offset => v.getFloat32(offset, true);
+  const c = v.getUint8(6);
+  return {
+    state: v.getUint8(0),
+    flags: v.getUint8(1),
+    faults: v.getUint16(2, true),
+    warnings: v.getUint16(4, true),
+    calibration: { sys: c >> 6, gyro: (c >> 4) & 3, accel: (c >> 2) & 3, mag: c & 3 },
+    sequence: v.getUint8(7),
+    quaternion: [f(8), f(12), f(16), f(20)],
+    roll: f(24),
+    pitch: f(28),
+    yaw: f(32),
+    acceleration: [f(36), f(40), f(44)],
+    rate: [f(48), f(52), f(56)],
+    temperature: v.getInt16(60, true) / 10,
+  };
 }
-export const IMU_SET_ID = 0xa1;
-export const IMU_RESET_ORIENTATION = 0xa2;

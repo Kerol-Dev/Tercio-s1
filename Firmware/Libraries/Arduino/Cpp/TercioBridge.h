@@ -3,7 +3,8 @@
 // Tercio host library for Arduino-class boards — CAN protocol v2, adapter
 // serial framing v2.
 //
-// Talks to Tercio S1 drivers through the Tercio FD adapter over any Stream.
+// Talks to Tercio S1 drivers and Tercio IMUs through the Tercio FD adapter over
+// any Stream.
 // Serial frames are [id u16][opcode u8][payload][crc16 u16] (little-endian),
 // COBS-encoded and 0x00-terminated; id 0x800 is the adapter itself.
 // No dynamic allocation. Call bus.poll() often (every loop iteration).
@@ -12,8 +13,10 @@
 //   Tercio::Stepper motor(bus, 1, Tercio::Unit::Degrees);
 //   motor.enable();
 //   motor.moveTo(90.0);
+//   Tercio::Imu imu(bus);               // node 100
+//   imu.zero();
 //
-// Wire contracts: Tercio-s1/Firmware/src/protocol/Protocol.h (CAN) and
+// Wire contracts: Tercio-s1/ and Tercio-imu/Firmware/src/protocol/Protocol.h (CAN) and
 // Tercio-fdcan/Firmware/src/bridge/{Framing,AdapterProtocol}.h (serial).
 // -----------------------------------------------------------------------------
 #include <Arduino.h>
@@ -61,6 +64,30 @@ namespace flag {
 constexpr uint8_t Enabled = 1u << 0, Calibrated = 1u << 1, Homed = 1u << 2, Settled = 1u << 3,
                   LimitMin = 1u << 4, LimitMax = 1u << 5, MovePending = 1u << 6, ExtEnable = 1u << 7;
 }
+
+// ---- Tercio IMU ---------------------------------------------------------------------
+enum class ImuParam : uint8_t { NodeId = 0x01, TelemetryRateHz = 0x02, FusionMode = 0x70, AxisMap = 0x71 };
+
+namespace imu_flag {
+constexpr uint8_t Zeroed = 1u << 0, ZeroHeadingOnly = 1u << 1, CalibrationStored = 1u << 2, Magnetometer = 1u << 3,
+                  Calibrated = 1u << 4;
+}
+
+// Latest report of a Tercio IMU. Angles in degrees, relative to the zero reference.
+struct ImuTelemetry {
+  uint8_t state = 0;  // 0 starting, 1 running, 2 fault
+  uint8_t flags = 0;
+  uint16_t faults = 0;
+  uint16_t warnings = 0;
+  uint8_t calSystem = 0, calGyro = 0, calAccel = 0, calMag = 0;  // 0..3 each
+  uint8_t sequence = 0;
+  float quaternion[4] = {1, 0, 0, 0};  // w, x, y, z
+  float roll = 0, pitch = 0, yaw = 0;
+  float acceleration[3] = {};          // m/s², gravity included, sensor axes
+  float rate[3] = {};                  // deg/s, sensor axes
+  float temperatureC = 0;
+  uint32_t receivedMs = 0;
+};
 
 // Position unit for a Stepper (the wire carries turns).
 enum class Unit : uint8_t { Turns, Degrees, Radians };
@@ -120,6 +147,7 @@ class Bus {
   void sync();  // start moves queued with `deferred`
 
   bool telemetry(uint8_t node, Telemetry& out) const;
+  bool imuTelemetry(uint8_t node, ImuTelemetry& out) const;  // false until the IMU has reported
   void onFault(FaultCallback callback) { onFault_ = callback; }
   // False until the adapter has reported once.
   bool adapterStatus(AdapterStatus& out) const;
@@ -127,9 +155,14 @@ class Bus {
 
  private:
   static constexpr uint8_t kMaxNodes = 16;
+  static constexpr uint8_t kMaxImus = 4;
   struct Slot {
     uint8_t node = 0;  // 0 = free
     Telemetry telemetry;
+  };
+  struct ImuSlot {
+    uint8_t node = 0;
+    ImuTelemetry telemetry;
   };
 
   void dispatch(uint16_t canId, uint8_t opcode, const uint8_t* payload, uint8_t length);
@@ -144,6 +177,7 @@ class Bus {
   AdapterStatus adapter_{};
   bool adapterSeen_ = false;
   Slot slots_[kMaxNodes];
+  ImuSlot imuSlots_[kMaxImus];
   FaultCallback onFault_ = nullptr;
 
   // Reply being waited for.
@@ -198,6 +232,29 @@ class Stepper {
   Bus& bus_;
   uint8_t id_;
   Unit unit_;
+};
+
+// One Tercio IMU (BNO055 orientation sensor). Every call returns a Status.
+class Imu {
+ public:
+  explicit Imu(Bus& bus, uint8_t nodeId = 100) : bus_(bus), id_(nodeId) {}
+
+  uint8_t id() const { return id_; }
+
+  Status zero(bool headingOnly = false);  // this attitude becomes the reference
+  Status clearZero();
+  Status saveCalibration();               // needs a full calibration; restored at every power-up
+  Status save() { return bus_.request(id_, Cmd::SaveConfig); }
+  Status clearFaults() { return bus_.request(id_, Cmd::ClearFaults); }
+  Status reboot() { return bus_.request(id_, Cmd::Reboot); }
+  Status getParam(ImuParam param, uint32_t& value);
+  Status setParam(ImuParam param, uint32_t value);
+
+  bool telemetry(ImuTelemetry& out) const { return bus_.imuTelemetry(id_, out); }
+
+ private:
+  Bus& bus_;
+  uint8_t id_;
 };
 
 }  // namespace Tercio

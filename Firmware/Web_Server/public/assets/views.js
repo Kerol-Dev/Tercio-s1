@@ -1,6 +1,6 @@
 // -----------------------------------------------------------------------------
-// Everything outside a single motor: top bar, device rail, the connect screen,
-// the bus overview, the adapter page and the IMU page.
+// Everything outside a single device: top bar, device rail, the connect screen,
+// the bus overview and the adapter page. (The IMU page is in imu.js.)
 // -----------------------------------------------------------------------------
 import * as p from './protocol.js';
 import { SerialTransport } from './link.js';
@@ -8,6 +8,7 @@ import * as store from './store.js';
 import { state } from './store.js';
 import { h, icon, confirmDialog, fixed, pos, vel, copyText, dialLabels, mount, toast } from './ui.js';
 import { Dial } from './widgets.js';
+import { imuStatus, imuStale } from './imu.js';
 
 export const STALE_MS = 1500;
 
@@ -132,6 +133,13 @@ function motorItem(node, scope) {
   return railItem({ target: node.id, lead: h('span', { class: 'id' }, node.id), name: store.nameOf(node), sub, end, title: `Node ${node.id}` });
 }
 
+function imuItem(imu, scope) {
+  const sub = h('span', { class: 'sub' });
+  scope.text(sub, () => (imuStale(imu) ? imuStatus(imu).name : `yaw ${fixed(imu.t.yaw, 1)}°`));
+  const end = h('span', { class: 'end' }, liveDot(scope, () => imuStatus(imu).tone));
+  return railItem({ target: `imu:${imu.id}`, lead: h('span', { class: 'id' }, imu.id), name: store.nameOf(imu), sub, end, title: `IMU, node ${imu.id}` });
+}
+
 export function renderRail(scope) {
   scope.clear();
   const rail = document.getElementById('rail');
@@ -150,8 +158,7 @@ export function renderRail(scope) {
   mount(rail,
     h('div', { class: 'rail-section' }, railItem({ target: 'fleet', lead: h('span', { class: 'id' }, icon('grid')), name: 'Overview', sub: h('span', { class: 'sub' }, plural(motors.length, 'motor')) })),
     railSection('Motors', scan, motors.length ? motors.map(node => motorItem(node, scope)) : h('div', { class: 'rail-empty' }, 'No motors have answered yet.')),
-    state.imus.size ? railSection('Sensors', null, [...state.imus.keys()].map(id =>
-      railItem({ target: `imu:${id}`, lead: h('span', { class: 'id' }, icon('compass')), name: 'IMU', sub: h('span', { class: 'sub' }, hexId(id)) }))) : null,
+    state.imus.size ? railSection('Sensors', null, [...state.imus.values()].sort((a, b) => a.id - b.id).map(imu => imuItem(imu, scope))) : null,
     railSection('Adapter', null, railItem({
       target: 'adapter', lead: h('span', { class: 'id' }, icon('usb')), name: state.mode === 'demo' ? 'Simulated adapter' : 'Tercio FD',
       sub: adapterSub, end: h('span', { class: 'end' }, liveDot(scope, busTone)),
@@ -223,7 +230,8 @@ export function renderFleet(stage, scope) {
       ],
     }),
     duplicateBanner(),
-    motors.length ? h('div', { class: 'fleet' }, motors.map(node => unitCard(node, scope))) : emptyBus(),
+    motors.length ? h('div', { class: 'fleet' }, motors.map(node => unitCard(node, scope))) : state.imus.size ? null : emptyBus(),
+    state.imus.size ? h('div', { class: 'fleet' }, [...state.imus.values()].sort((a, b) => a.id - b.id).map(imu => imuCard(imu, scope))) : null,
     motors.length > 1 ? syncPanel(motors, scope) : null,
   );
 }
@@ -277,6 +285,32 @@ function unitCard(node, scope) {
     h('div', { class: 'mini' }, canvas),
     big,
     h('div', { class: 'row between small muted' }, velocity, temperature));
+}
+
+function imuCard(imu, scope) {
+  const canvas = h('canvas');
+  const dial = new Dial(canvas);
+  scope.frame(() => {
+    const yaw = imu.t?.yaw ?? 0;
+    dial.draw({ turns: yaw / 360, target: yaw / 360, tone: imuStatus(imu).tone === 'good' ? 'accent' : 'neutral', labels: ['0°', '90°', '180°', '−90°'] });
+  });
+  const big = h('div', { class: 'big' });
+  scope.text(big, () => (imu.t ? `${fixed(imu.t.yaw, 1)}°` : '—'));
+  const roll = h('span', { class: 'num' });
+  scope.text(roll, () => (imu.t ? `roll ${fixed(imu.t.roll, 1)}°` : '—'));
+  const pitch = h('span', { class: 'num' });
+  scope.text(pitch, () => (imu.t ? `pitch ${fixed(imu.t.pitch, 1)}°` : '—'));
+  const chipEl = h('span');
+  scope.swap(chipEl, () => imuStatus(imu).name, () => chip(h('span', { class: 'chip-label' }, imuStatus(imu).name), imuStatus(imu).tone));
+  const open = () => store.select(`imu:${imu.id}`);
+  return h('article', {
+    class: 'panel unit-card', tabindex: '0', role: 'link', 'aria-label': `Open ${store.nameOf(imu)}`,
+    onclick: open, onkeydown: event => (event.key === 'Enter' || event.key === ' ') && (event.preventDefault(), open()),
+  },
+    h('div', { class: 'top' }, h('div', { class: 'stack-tight' }, h('strong', {}, store.nameOf(imu)), h('span', { class: 'mono muted small' }, `IMU · node ${imu.id}`)), chipEl),
+    h('div', { class: 'mini' }, canvas),
+    big,
+    h('div', { class: 'row between small muted' }, roll, pitch));
 }
 
 function syncPanel(motors, scope) {
@@ -393,41 +427,4 @@ async function bootloader() {
     confirm: 'Restart into update mode',
   });
   if (ok) store.adapterBootloader();
-}
-
-// ---- IMU ---------------------------------------------------------------------------------------------------------
-export function renderImu(stage, scope, id) {
-  const entry = () => state.imus.get(id)?.imu;
-  const angle = key => {
-    const el = h('div', { class: 'value' });
-    scope.text(el, () => (entry() ? `${fixed(entry()[key], 1)}°` : '—'));
-    return el;
-  };
-  const horizon = h('div', { class: 'horizon-sky' });
-  scope.frame(() => {
-    const imu = entry();
-    if (imu) horizon.style.transform = `rotate(${-imu.roll}deg) translateY(${Math.max(-45, Math.min(45, imu.pitch))}%)`;
-  });
-  const accel = h('dd');
-  scope.text(accel, () => {
-    const imu = entry();
-    return imu ? `${fixed(imu.ax, 2)}, ${fixed(imu.ay, 2)}, ${fixed(imu.az, 2)} m/s²` : '—';
-  });
-  const temperature = h('dd');
-  scope.text(temperature, () => (entry() ? `${fixed(entry().temperature, 1)} °C` : '—'));
-  mount(stage,
-    pageHead({
-      eyebrow: 'Tercio IMU', title: 'Orientation', suffix: hexId(id),
-      actions: [h('button', { class: 'btn btn-secondary', type: 'button', onclick: () => store.imuZero(id) }, icon('zero'), 'Zero orientation')],
-    }),
-    h('div', { class: 'grid cols-2' },
-      panel(null, h('div', { class: 'horizon', 'aria-hidden': 'true' }, horizon, h('div', { class: 'horizon-mark' }))),
-      panel('Readings', h('div', { class: 'stack' },
-        h('div', { class: 'stat-grid' },
-          h('div', { class: 'stat' }, h('span', { class: 'eyebrow' }, 'Roll'), angle('roll')),
-          h('div', { class: 'stat' }, h('span', { class: 'eyebrow' }, 'Pitch'), angle('pitch')),
-          h('div', { class: 'stat' }, h('span', { class: 'eyebrow' }, 'Yaw'), angle('yaw'))),
-        h('dl', { class: 'kv' }, h('dt', {}, 'Acceleration'), accel, h('dt', {}, 'Temperature'), temperature)),
-      { note: 'Zero orientation makes the current attitude the new reference.' })),
-  );
 }

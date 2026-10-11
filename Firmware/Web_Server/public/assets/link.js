@@ -216,6 +216,9 @@ export class Bus extends EventTarget {
     if (fn === p.FN_TELEMETRY && opcode === p.FRAME_TELEMETRY) {
       const telemetry = p.parseTelemetry(payload);
       if (telemetry) this.emit('telemetry', { node, telemetry });
+    } else if (fn === p.FN_TELEMETRY && opcode === p.FRAME_IMU) {
+      const telemetry = p.parseImuTelemetry(payload);
+      if (telemetry) this.emit('imu-telemetry', { node, telemetry });
     } else if (fn === p.FN_REPLY && payload.length >= 1) {
       const status = payload[0];
       const data = payload.subarray(1);
@@ -227,9 +230,6 @@ export class Bus extends EventTarget {
     } else if (fn === p.FN_EVENT && opcode === p.FRAME_FAULT) {
       const fault = p.parseFault(payload);
       if (fault) this.emit('fault', { node, ...fault });
-    } else if (id < p.FN_EVENT && opcode === 0x02) {
-      const imu = p.parseImu(payload);
-      if (imu) this.emit('imu', { id, imu });
     }
   }
 }

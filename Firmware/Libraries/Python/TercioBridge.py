@@ -1,6 +1,6 @@
 """Tercio host library — CAN protocol v2, adapter serial framing v2.
 
-Talks to Tercio S1 drivers through the Tercio FD USB-CAN adapter. On the
+Talks to Tercio S1 drivers and Tercio IMUs through the Tercio FD USB-CAN adapter. On the
 serial link every frame is ``[id u16][opcode u8][payload][crc16 u16]``
 (little-endian), COBS-encoded and terminated by a 0x00 byte; id 0x800
 addresses the adapter itself (bus health, info, firmware-update mode).
@@ -17,7 +17,12 @@ Quick start::
         motor.move_to(90, wait=True)
         print(motor.position, motor.telemetry.state)
 
-The wire contracts are ``Tercio-s1/Firmware/src/protocol/Protocol.h`` (CAN) and
+        imu = Imu(bus, 100)
+        imu.zero()
+        print(imu.telemetry.roll, imu.telemetry.pitch, imu.telemetry.yaw)
+
+The wire contracts are ``Tercio-s1/Firmware/src/protocol/Protocol.h`` and
+``Tercio-imu/Firmware/src/protocol/Protocol.h`` (CAN), and
 ``Tercio-fdcan/Firmware/src/bridge/{Framing,AdapterProtocol}.h`` (serial); keep
 them in sync.
 """
@@ -50,6 +55,14 @@ MOVE_DEFERRED = 0x01
 
 FRAME_TELEMETRY = 0x01
 FRAME_FAULT = 0x02
+FRAME_IMU = 0x03
+
+
+class Device(IntEnum):
+    """Device class: the last byte of GetInfo (a 20-byte reply means an S1)."""
+
+    S1 = 0
+    IMU = 1
 
 
 class Cmd(IntEnum):
@@ -219,7 +232,8 @@ class TercioError(RuntimeError):
 # ------------------------------------------------------------------ payloads
 
 _TELEMETRY = struct.Struct("<BBHHddffhHBBB")  # 37 bytes, see Protocol.h
-_INFO = struct.Struct("<BBBBBBBB12s")         # 20 bytes
+_INFO = struct.Struct("<BBBBBBBB12s")         # 20 bytes, then the device class
+_IMU_TELEMETRY = struct.Struct("<BBHHBB4f3f3f3fh")  # 62 bytes, see Tercio-imu Protocol.h
 
 
 @dataclass
@@ -263,17 +277,20 @@ class NodeInfo:
     encoder: EncoderType
     uid: bytes
     crystal_clock: bool = False
+    device: Device = Device.S1
 
     def __str__(self) -> str:
         clock = "crystal" if self.crystal_clock else "HSI clock"
-        return (f"node {self.node_id}: fw {self.firmware}, protocol {self.protocol}, hw rev "
-                f"{self.hardware_revision}, {self.encoder.name}, {clock}, uid {self.uid.hex()}")
+        kind = "Tercio IMU" if self.device == Device.IMU else f"Tercio S1, {self.encoder.name}"
+        return (f"node {self.node_id}: {kind}, fw {self.firmware}, protocol {self.protocol}, hw rev "
+                f"{self.hardware_revision}, {clock}, uid {self.uid.hex()}")
 
 
 def _parse_info(data: bytes) -> NodeInfo:
     proto, major, minor, patch, hw, enc, node, flags, uid = _INFO.unpack_from(data)
     encoder = EncoderType(enc) if enc in EncoderType._value2member_map_ else EncoderType.AS5600_INTERNAL
-    return NodeInfo(node, proto, f"{major}.{minor}.{patch}", hw, encoder, bytes(uid), bool(flags & 1))
+    device = Device(data[20]) if len(data) > 20 and data[20] in Device._value2member_map_ else Device.S1
+    return NodeInfo(node, proto, f"{major}.{minor}.{patch}", hw, encoder, bytes(uid), bool(flags & 1), device)
 
 
 def _parse_telemetry(data: bytes) -> Optional[Telemetry]:
@@ -442,7 +459,7 @@ class Bus:
         self._telemetry: Dict[int, Telemetry] = {}
         self._pending: Dict[Tuple[int, int], _Pending] = {}
         self._discovered: Dict[bytes, NodeInfo] = {}
-        self._legacy: Dict[int, "ImuState"] = {}
+        self._imu_telemetry: Dict[int, "ImuTelemetry"] = {}
         self._adapter_status: Optional[AdapterStatus] = None
         self.framing_errors = 0  # damaged frames received from the adapter
         self.on_fault: Optional[Callable[[int, Fault, Warning_, AxisState], None]] = None
@@ -545,6 +562,10 @@ class Bus:
         with self._lock:
             return self._telemetry.get(node)
 
+    def imu_telemetry(self, node: int) -> Optional["ImuTelemetry"]:
+        with self._lock:
+            return self._imu_telemetry.get(node)
+
     # -- the adapter itself
     def _adapter_request(self, op: AdapterOp, timeout: Optional[float] = None) -> bytes:
         return self._await((ADAPTER_ID, int(op)), lambda: self.send(ADAPTER_ID, int(op)), timeout).data
@@ -570,10 +591,16 @@ class Bus:
         self.close()
 
     def nodes(self) -> List[int]:
-        """Nodes that sent telemetry recently."""
+        """Motors (Tercio S1) that sent telemetry recently."""
         now = time.monotonic()
         with self._lock:
             return sorted(n for n, t in self._telemetry.items() if now - t.timestamp < 1.0)
+
+    def imus(self) -> List[int]:
+        """Tercio IMUs that sent telemetry recently."""
+        now = time.monotonic()
+        with self._lock:
+            return sorted(n for n, t in self._imu_telemetry.items() if now - t.timestamp < 1.0)
 
     # -- receive
     def _read_loop(self) -> None:
@@ -641,13 +668,20 @@ class Bus:
             if telemetry:
                 with self._lock:
                     self._telemetry[node] = telemetry
+        elif function == FN_TELEMETRY and opcode == FRAME_IMU:
+            imu = _parse_imu_telemetry(payload)
+            if imu:
+                with self._lock:
+                    self._imu_telemetry[node] = imu
         elif function == FN_EVENT and opcode == FRAME_FAULT and len(payload) >= 5:
             faults, warnings, state = struct.unpack_from("<HHB", payload)
             if self.on_fault:
-                self.on_fault(node, Fault(faults), Warning_(warnings), AxisState(state))
-        elif opcode == 0x02 and len(payload) >= 28:  # Tercio IMU (legacy protocol)
-            with self._lock:
-                self._legacy[can_id] = ImuState(*struct.unpack_from("<fffffff", payload))
+                with self._lock:
+                    is_imu = node in self._imu_telemetry
+                if is_imu:
+                    self.on_fault(node, ImuFault(faults), ImuWarning(warnings), ImuState(state) if state <= 2 else state)
+                else:
+                    self.on_fault(node, Fault(faults), Warning_(warnings), AxisState(state))
 
 
 # ------------------------------------------------------------------- stepper
@@ -834,38 +868,174 @@ class Stepper:
         raise TercioError(f"timeout during {running.name.lower()}", node=self.id)
 
 
-# ----------------------------------------------------- Tercio IMU (legacy v1)
+# ---------------------------------------------------------------- Tercio IMU
+
+DEFAULT_IMU_NODE = 100
+
+
+class ImuCmd(IntEnum):
+    ZERO = 0x30
+    CLEAR_ZERO = 0x31
+    SAVE_CALIBRATION = 0x32
+
+
+class ZeroMode(IntEnum):
+    ALL = 0      # roll, pitch and yaw read 0 here
+    HEADING = 1  # only yaw reads 0; roll and pitch stay level-referenced
+
+
+class ImuParam(IntEnum):
+    NODE_ID = 0x01
+    TELEMETRY_RATE_HZ = 0x02
+    FUSION_MODE = 0x70
+    AXIS_MAP = 0x71
+
+
+class FusionMode(IntEnum):
+    IMU = 0   # accelerometer + gyroscope: relative heading, immune to magnetic disturbance
+    NDOF = 1  # adds the magnetometer: absolute heading
+
+
+class ImuState(IntEnum):
+    STARTING = 0
+    RUNNING = 1
+    FAULT = 2
+
+
+class ImuFault(IntFlag):
+    SENSOR_COMM = 1 << 0
+    SENSOR_ERROR = 1 << 1
+    SELF_TEST = 1 << 2
+
+
+class ImuWarning(IntFlag):
+    NOT_CALIBRATED = 1 << 0
+    CAN_ERROR_PASSIVE = 1 << 5
+    STORAGE = 1 << 7
+
+
+class ImuFlag(IntFlag):
+    ZEROED = 1 << 0
+    ZERO_HEADING_ONLY = 1 << 1
+    CALIBRATION_STORED = 1 << 2
+    MAGNETOMETER = 1 << 3
+    CALIBRATED = 1 << 4
+
 
 @dataclass
-class ImuState:
+class Calibration:
+    """BNO055 calibration levels, 0 (none) to 3 (fully calibrated)."""
+
+    system: int
+    gyroscope: int
+    accelerometer: int
+    magnetometer: int
+
+
+@dataclass
+class ImuTelemetry:
+    """Latest report of a Tercio IMU. Angles in degrees, relative to the zero reference."""
+
+    state: ImuState
+    flags: ImuFlag
+    faults: ImuFault
+    warnings: ImuWarning
+    calibration: Calibration
+    sequence: int
+    quaternion: Tuple[float, float, float, float]   # w, x, y, z
     roll: float
     pitch: float
     yaw: float
-    ax: float
-    ay: float
-    az: float
-    temp: float
+    acceleration: Tuple[float, float, float]        # m/s², gravity included, sensor axes
+    rate: Tuple[float, float, float]                # deg/s, sensor axes
+    temperature_c: float
     timestamp: float = field(default_factory=time.monotonic)
 
+    @property
+    def calibrated(self) -> bool:
+        return ImuFlag.CALIBRATED in self.flags
 
-class IMU:
-    """Tercio IMU module (its own protocol; unchanged)."""
 
-    SET_ID = 0xA1
-    RESET_ORIENTATION = 0xA2
+def _parse_imu_telemetry(data: bytes) -> Optional[ImuTelemetry]:
+    if len(data) < _IMU_TELEMETRY.size:
+        return None
+    values = _IMU_TELEMETRY.unpack_from(data)
+    state, flags, faults, warnings, cal, sequence = values[:6]
+    q, euler, accel, rate, temp = values[6:10], values[10:13], values[13:16], values[16:19], values[19]
+    return ImuTelemetry(
+        state=ImuState(state) if state in ImuState._value2member_map_ else ImuState.FAULT,
+        flags=ImuFlag(flags), faults=ImuFault(faults), warnings=ImuWarning(warnings),
+        calibration=Calibration(cal >> 6, (cal >> 4) & 3, (cal >> 2) & 3, cal & 3),
+        sequence=sequence, quaternion=tuple(q), roll=euler[0], pitch=euler[1], yaw=euler[2],
+        acceleration=tuple(accel), rate=tuple(rate), temperature_c=temp / 10.0,
+    )
 
-    def __init__(self, bus: Bus, control_id: int = 0x003):
+
+class Imu:
+    """One Tercio IMU (BNO055 orientation sensor) on protocol v2."""
+
+    def __init__(self, bus: Bus, node_id: int = DEFAULT_IMU_NODE):
+        if not 1 <= node_id <= MAX_NODE_ID:
+            raise ValueError("node id must be 1..127")
         self.bus = bus
-        self.id = control_id
+        self.id = node_id
 
-    def reset_orientation(self) -> None:
-        self.bus.send(self.id, self.RESET_ORIENTATION)
+    def info(self) -> NodeInfo:
+        return _parse_info(self.bus.request(self.id, Cmd.GET_INFO))
 
-    def set_can_id(self, new_id: int) -> None:
-        self.bus.send(self.id, self.SET_ID, struct.pack("<H", new_id & 0x7FF))
-        self.id = new_id & 0x7FF
+    def zero(self, mode: ZeroMode = ZeroMode.ALL) -> None:
+        """The current attitude becomes the reference (save() keeps it after a power cycle)."""
+        self.bus.request(self.id, ImuCmd.ZERO, bytes([mode]))
+
+    def zero_heading(self) -> None:
+        """Yaw reads 0 here; roll and pitch stay level-referenced."""
+        self.zero(ZeroMode.HEADING)
+
+    def clear_zero(self) -> None:
+        self.bus.request(self.id, ImuCmd.CLEAR_ZERO)
+
+    def save_calibration(self) -> None:
+        """Stores the sensor's calibration in flash (restored at every power-up). Needs a full calibration."""
+        self.bus.request(self.id, ImuCmd.SAVE_CALIBRATION, timeout=1.0)
+
+    def wait_calibrated(self, timeout: float = 120.0) -> None:
+        """Blocks until the sensor reports full calibration for its fusion mode."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            t = self.telemetry
+            if t and t.calibrated:
+                return
+            time.sleep(0.05)
+        raise TercioError("timeout waiting for calibration", node=self.id)
+
+    def save(self) -> None:
+        """Persists settings, zero and calibration to flash."""
+        self.bus.request(self.id, Cmd.SAVE_CONFIG, timeout=1.0)
+
+    def factory_reset(self) -> None:
+        self.bus.request(self.id, Cmd.FACTORY_RESET)
+
+    def reboot(self) -> None:
+        self.bus.request(self.id, Cmd.REBOOT)
+
+    def clear_faults(self) -> None:
+        self.bus.request(self.id, Cmd.CLEAR_FAULTS)
+
+    def get_param(self, param: ImuParam) -> int:
+        data = self.bus.request(self.id, Cmd.GET_PARAM, bytes([param]))
+        return struct.unpack_from("<I", data, 1)[0]
+
+    def set_param(self, param: ImuParam, value: int) -> int:
+        """Writes a parameter (save() to persist). Returns the value as applied."""
+        data = self.bus.request(self.id, Cmd.SET_PARAM, bytes([param]) + struct.pack("<I", int(value)))
+        applied = struct.unpack_from("<I", data, 1)[0]
+        if param == ImuParam.NODE_ID:
+            self.id = applied
+        return applied
+
+    def set_fusion_mode(self, mode: FusionMode) -> None:
+        self.set_param(ImuParam.FUSION_MODE, mode)
 
     @property
-    def state(self) -> Optional[ImuState]:
-        with self.bus._lock:
-            return self.bus._legacy.get(self.id)
+    def telemetry(self) -> Optional[ImuTelemetry]:
+        return self.bus.imu_telemetry(self.id)

@@ -6,7 +6,8 @@ import * as store from './store.js';
 import { state, subscribe } from './store.js';
 import { SerialTransport } from './link.js';
 import { Scope } from './ui.js';
-import { renderTopbar, renderRail, renderWelcome, renderFleet, renderAdapter, renderImu } from './views.js';
+import { renderTopbar, renderRail, renderWelcome, renderFleet, renderAdapter } from './views.js';
+import { renderImu } from './imu.js';
 import { renderAxis } from './axis.js';
 
 const scopes = { top: new Scope(), rail: new Scope(), stage: new Scope() };
@@ -19,7 +20,7 @@ function renderStage() {
   if (typeof selected === 'number' && state.nodes.has(selected)) return renderAxis(stage, scopes.stage, state.nodes.get(selected));
   if (selected === 'adapter') return renderAdapter(stage, scopes.stage);
   if (typeof selected === 'string' && selected.startsWith('imu:') && state.imus.has(Number(selected.slice(4)))) {
-    return renderImu(stage, scopes.stage, Number(selected.slice(4)));
+    return renderImu(stage, scopes.stage, state.imus.get(Number(selected.slice(4))));
   }
   state.selected = 'fleet';
   return renderFleet(stage, scopes.stage);

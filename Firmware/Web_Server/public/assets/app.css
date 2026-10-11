@@ -602,6 +602,13 @@ kbd { font: 500 11px/1 var(--font-mono); padding: 2px 5px; border: 1px solid var
 .horizon-sky { position: absolute; inset: -50%; background: linear-gradient(var(--accent-soft) 50%, color-mix(in srgb, var(--warn) 16%, var(--panel-2)) 50%); transition: transform 0.08s linear; }
 .horizon-mark { position: absolute; left: 25%; right: 25%; top: 50%; height: 2px; margin-top: -1px; background: var(--ink); border-radius: 2px; }
 .horizon-mark::after { content: ""; position: absolute; left: 50%; top: -5px; width: 12px; height: 12px; margin-left: -6px; border-radius: 50%; border: 2px solid var(--ink); background: var(--panel); }
+.attitude-body { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; align-items: start; }
+.attitude-view { display: flex; flex-direction: column; align-items: center; gap: 8px; min-width: 0; }
+.attitude-view .horizon { max-width: 220px; }
+.attitude-view .caption { font-size: 12px; color: var(--ink-3); }
+.compass { position: relative; width: 100%; max-width: 220px; aspect-ratio: 1; }
+.compass canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.hint-list { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
 
 /* ---- Narrow screens ---------------------------------------------------------------------------------- */
 @media (max-width: 1100px) {

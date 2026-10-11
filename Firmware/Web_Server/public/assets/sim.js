@@ -14,12 +14,6 @@ const CPR = 4096;
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const u8 = (...values) => Uint8Array.from(values);
 
-function f32Bytes(values) {
-  const b = new DataView(new ArrayBuffer(values.length * 4));
-  values.forEach((v, i) => b.setFloat32(i * 4, v, true));
-  return new Uint8Array(b.buffer);
-}
-
 class Trajectory {
   constructor() {
     this.reset(0);
@@ -251,7 +245,7 @@ class SimMotor {
 
   info() {
     const uid = p.uidBytes(this.uid);
-    return u8(2, 2, 0, 0, 1, this.params.encoderType, this.id, 1, ...uid);
+    return u8(2, 2, 0, 0, 1, this.params.encoderType, this.id, 1, ...uid, p.DEVICE.S1);
   }
 
   // ---- procedures ------------------------------------------------------------------
@@ -392,25 +386,140 @@ class SimMotor {
   }
 }
 
+// A Tercio IMU on protocol v2: GetInfo, parameters, zeroing and calibration
+// follow the firmware (Tercio-imu Firmware/src/app). The sensor is a slow
+// synthetic sway; calibration climbs as if the board were being moved around.
+const quatMul = (a, b) => [
+  a[0] * b[0] - a[1] * b[1] - a[2] * b[2] - a[3] * b[3],
+  a[0] * b[1] + a[1] * b[0] + a[2] * b[3] - a[3] * b[2],
+  a[0] * b[2] - a[1] * b[3] + a[2] * b[0] + a[3] * b[1],
+  a[0] * b[3] + a[1] * b[2] - a[2] * b[1] + a[3] * b[0],
+];
+const quatConj = q => [q[0], -q[1], -q[2], -q[3]];
+function quatFromEuler(roll, pitch, yaw) {
+  const [cr, sr] = [Math.cos(roll / 2), Math.sin(roll / 2)];
+  const [cp, sp] = [Math.cos(pitch / 2), Math.sin(pitch / 2)];
+  const [cy, sy] = [Math.cos(yaw / 2), Math.sin(yaw / 2)];
+  return [cr * cp * cy + sr * sp * sy, sr * cp * cy - cr * sp * sy, cr * sp * cy + sr * cp * sy, cr * cp * sy - sr * sp * cy];
+}
+function eulerFromQuat([w, x, y, z]) {
+  const deg = 180 / Math.PI;
+  return [
+    Math.atan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y)) * deg,
+    Math.asin(clamp(2 * (w * y - z * x), -1, 1)) * deg,
+    Math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z)) * deg,
+  ];
+}
+
 class SimImu {
-  constructor(bus, id) {
+  constructor(bus, { id, uid }) {
     this.bus = bus;
     this.id = id;
-    this.offset = [0, 0, 0];
+    this.uid = uid;
+    this.params = { ...p.IMU_PARAM_DEFAULTS, nodeId: id };
+    this.zero = null;  // [quaternion, mode]
+    this.calibrationStored = false;
+    this.started = performance.now();
+    this.sequence = 0;
     this.next = 0;
+    this.pending = null;
   }
-  handle(opcode) {
-    if (opcode === p.IMU_RESET_ORIENTATION) this.offset = this.angles(performance.now());
+
+  info() {
+    return u8(2, 2, 0, 0, 1, this.params.fusionMode, this.id, 0, ...p.uidBytes(this.uid), p.DEVICE.Imu);
   }
-  angles(now) {
-    const s = now / 1000;
-    return [12 * Math.sin(s * 0.7), 7 * Math.sin(s * 0.45 + 1), (s * 9) % 360];
+
+  raw(now) {
+    const s = (now - this.started) / 1000;
+    const rad = Math.PI / 180;
+    return quatFromEuler(12 * Math.sin(s * 0.7) * rad, 7 * Math.sin(s * 0.45 + 1) * rad, (((s * 9 + 40) % 360) - 180) * rad);
   }
+
+  calibration(now) {
+    const s = (now - this.started) / 1000;
+    const level = threshold => (this.calibrationStored ? 3 : clamp(Math.floor((s - threshold) / 2.5), 0, 3));
+    const ndof = this.params.fusionMode === 1;
+    const gyro = level(0), accel = level(4), mag = ndof ? level(2) : 0;
+    const sys = ndof ? Math.min(gyro, accel, mag) : 0;
+    return { sys, gyro, accel, mag, byte: (sys << 6) | (gyro << 4) | (accel << 2) | mag, full: ndof ? sys === 3 && mag === 3 && gyro === 3 && accel === 3 : gyro === 3 && accel === 3 };
+  }
+
+  handle(cmd, payload) {
+    const P = p.Cmd;
+    switch (cmd) {
+      case P.GetInfo:
+        return [p.Status.Ok, this.info()];
+      case P.SaveConfig:
+      case P.ClearFaults:
+        return [p.Status.Ok];
+      case P.Reboot:
+        this.started = performance.now();
+        return [p.Status.Ok];
+      case P.FactoryReset:
+        this.params = { ...p.IMU_PARAM_DEFAULTS, nodeId: this.id };
+        this.zero = null;
+        this.calibrationStored = false;
+        return [p.Status.Ok];
+      case P.GetParam: {
+        const def = p.IMU_PARAMS.find(d => d.id === payload[0]);
+        if (!def) return [p.Status.UnknownParam];
+        return [p.Status.Ok, u8(def.id, ...p.encodeParamValue(def, this.params[def.key]))];
+      }
+      case P.SetParam: {
+        const def = p.IMU_PARAMS.find(d => d.id === payload[0]);
+        if (!def) return [p.Status.UnknownParam];
+        if (payload.length < 5) return [p.Status.BadLength];
+        const value = p.decodeParamValue(def, payload, 1);
+        if (def.options && !def.options.some(o => o.value === value)) return [p.Status.BadValue];
+        if (def.min !== undefined && (value < def.min || value > def.max)) return [p.Status.BadValue];
+        this.params[def.key] = value;
+        if (def.key === 'nodeId') this.pending = () => (this.id = value);
+        return [p.Status.Ok, u8(def.id, ...p.encodeParamValue(def, value))];
+      }
+      case p.ImuCmd.Zero: {
+        const mode = payload.length ? payload[0] : p.ZERO_ALL;
+        if (mode > p.ZERO_HEADING) return [p.Status.BadValue];
+        const q = this.raw(performance.now());
+        const reference = mode === p.ZERO_HEADING ? quatFromEuler(0, 0, eulerFromQuat(q)[2] * Math.PI / 180) : q;
+        this.zero = [reference, mode];
+        return [p.Status.Ok];
+      }
+      case p.ImuCmd.ClearZero:
+        this.zero = null;
+        return [p.Status.Ok];
+      case p.ImuCmd.SaveCalibration:
+        if (!this.calibration(performance.now()).full) return [p.Status.NotCalibrated];
+        this.calibrationStored = true;
+        return [p.Status.Ok];
+      default:
+        return [p.Status.UnknownCommand];
+    }
+  }
+
   step(now) {
-    if (now < this.next) return;
-    this.next = now + 40;
-    const [r, pi, y] = this.angles(now).map((a, i) => a - this.offset[i]);
-    this.bus.transmit(this.id, 0x02, f32Bytes([r, pi, y, 0.01, -0.02, 9.81, 29.5]));
+    if (now < this.next || !this.params.telemetryRateHz) return;
+    this.next = now + 1000 / this.params.telemetryRateHz;
+    const raw = this.raw(now);
+    let q = this.zero ? quatMul(quatConj(this.zero[0]), raw) : raw;
+    if (q[0] < 0) q = q.map(v => -v);
+    const [roll, pitch, yaw] = eulerFromQuat(q);
+    const c = this.calibration(now);
+    const flags = (this.zero ? 1 : 0) | (this.zero?.[1] === p.ZERO_HEADING ? 2 : 0) | (this.calibrationStored ? 4 : 0)
+      | (this.params.fusionMode === 1 ? 8 : 0) | (c.full ? 16 : 0);
+    const b = new DataView(new ArrayBuffer(p.IMU_TELEMETRY_SIZE));
+    b.setUint8(0, now - this.started < 900 ? p.ImuState.Starting : p.ImuState.Running);
+    b.setUint8(1, flags);
+    b.setUint16(4, c.full ? 0 : 1, true);
+    b.setUint8(6, c.byte);
+    b.setUint8(7, this.sequence++ & 0xff);
+    q.forEach((v, i) => b.setFloat32(8 + 4 * i, v, true));
+    [roll, pitch, yaw].forEach((v, i) => b.setFloat32(24 + 4 * i, v, true));
+    const g = 9.80665;
+    const rad = Math.PI / 180;
+    [g * Math.sin(pitch * rad), -g * Math.sin(roll * rad), g * Math.cos(roll * rad) * Math.cos(pitch * rad)].forEach((v, i) => b.setFloat32(36 + 4 * i, v, true));
+    [4.9 * Math.cos(now / 1430), 2.2 * Math.cos(now / 2220 + 1), 9].forEach((v, i) => b.setFloat32(48 + 4 * i, v, true));
+    b.setInt16(60, 296 + Math.round(Math.sin(now / 9000) * 3), true);
+    this.bus.transmit(p.FN_TELEMETRY + this.id, p.FRAME_IMU, new Uint8Array(b.buffer));
   }
 }
 
@@ -423,7 +532,7 @@ class Simulator {
       new SimMotor(this, { id: 2, uid: '3a0f1c2d48ab1e7700224466', calibrated: true, enabled: false, position: -1.5, temperature: 38 }),
       new SimMotor(this, { id: 3, uid: '3a0f1c2d48ab1e7700335577', calibrated: false, enabled: false, warnings: 1 << 2 }),
     ];
-    this.imu = new SimImu(this, 0x003);
+    this.imu = new SimImu(this, { id: p.DEFAULT_IMU_NODE, uid: '3a0f1c2d48ab1e77009f1e2d' });
     this.counters = { toCan: 0, fromCan: 0 };
     this.nextStatus = 0;
   }
@@ -467,9 +576,8 @@ class Simulator {
     this.counters.toCan++;
     const cmd = opcode & ~p.NO_REPLY;
     if (id === p.BROADCAST_ID) return this.handleBroadcast(cmd, payload);
-    if (id === this.imu.id) return this.imu.handle(opcode);
     if ((id & 0x780) !== p.FN_COMMAND) return;
-    const motor = this.motors.find(m => m.id === (id & 0x7f));
+    const motor = [...this.motors, this.imu].find(m => m.id === (id & 0x7f));
     if (!motor) return;  // nobody there: the host times out, as on a real bus
     const [status, data] = motor.handle(cmd, payload);
     if (status !== p.Status.Ok || !(opcode & p.NO_REPLY)) this.reply(motor.id, cmd, status, data);
@@ -480,7 +588,7 @@ class Simulator {
   }
 
   handleBroadcast(cmd, payload) {
-    for (const motor of this.motors) {
+    for (const motor of [...this.motors, this.imu]) {
       if (cmd === p.Cmd.GetInfo) {
         const delay = parseInt(motor.uid.slice(-2), 16) % 64;
         setTimeout(() => this.reply(motor.id, p.Cmd.GetInfo, p.Status.Ok, motor.info()), delay);
@@ -490,7 +598,7 @@ class Simulator {
           motor.id = motor.params.nodeId = payload[12];
           this.reply(motor.id, p.Cmd.AssignNodeId, p.Status.Ok);
         }
-      } else if ([p.Cmd.Stop, p.Cmd.EmergencyStop, p.Cmd.Sync, p.Cmd.Enable].includes(cmd)) {
+      } else if ([p.Cmd.Stop, p.Cmd.EmergencyStop, p.Cmd.Sync, p.Cmd.Enable].includes(cmd) && motor !== this.imu) {
         motor.handle(cmd, payload);
       }
     }

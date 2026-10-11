@@ -1,8 +1,8 @@
 // Tests for public/assets/protocol.js. Run with: node --test tests/protocol.test.mjs
 //
 // The FIRMWARE_* fixtures are wire bytes produced by the real firmware code:
-// Tercio S1 frame encoders (Protocol.h) framed by the Tercio FD bridge
-// (Framing.h). They pin the browser decoder to the firmware, byte for byte.
+// Tercio S1 and Tercio IMU frame encoders (Protocol.h) framed by the Tercio FD
+// bridge (Framing.h). They pin the browser decoder to the firmware, byte for byte.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
@@ -14,6 +14,9 @@ const FIRMWARE_TELEMETRY =
   '09050201020b20011109e47cfb84454a93c00101010104204540010e60c0cdcc4c3c85ff3b5e07c80d010101010101010101033e0f00';
 const FIRMWARE_INFO_REPLY = '03850101030202011101020501a0a1a2a3a4a5a6a7a8a9aaab0103929f00';
 const FIRMWARE_ADAPTER_STATUS = '0106080102820303e8030103d007010204010102050101020601010207010103608000';
+const FIRMWARE_IMU_TELEMETRY =
+  '07640203011501022003e44d0101023f010102bf0103803e0103403f010328410103a2c101032a430101023e01031cc10103c03f010350c0010101010107344485ff74ea00';
+const FIRMWARE_IMU_INFO_REPLY = '03e40101030202011401016401b0b1b2b3b4b5b6b7b8b9babb0113df00';
 
 test('crc16 check value', () => {
   assert.equal(p.crc16(new TextEncoder().encode('123456789')), 0x29b1);
@@ -55,11 +58,33 @@ test('decodes firmware info reply and adapter status', () => {
   const info = p.parseInfo(reply.payload.subarray(1));
   assert.deepEqual(info, {
     protocol: 2, firmware: '2.0.0', hardwareRevision: 1, encoderType: 2, nodeId: 5, crystalClock: true,
-    uid: 'a0a1a2a3a4a5a6a7a8a9aaab',
+    uid: 'a0a1a2a3a4a5a6a7a8a9aaab', device: p.DEVICE.S1,  // a 20-byte reply: no device byte, so an S1
   });
   assert.equal(status.id, p.ADAPTER_ID);
   const s = p.parseAdapterStatus(status.payload);
   assert.deepEqual([s.busState, s.tec, s.rec, s.toCan, s.fromCan, s.busOffEvents], [2, 130, 3, 1000, 2000, 7]);
+});
+
+test('decodes firmware IMU telemetry and info', () => {
+  const decoder = new p.FrameDecoder();
+  const [frame, reply] = decoder.push(bytes(FIRMWARE_IMU_TELEMETRY + FIRMWARE_IMU_INFO_REPLY));
+  assert.equal(frame.id, p.FN_TELEMETRY + p.DEFAULT_IMU_NODE);
+  assert.equal(frame.opcode, p.FRAME_IMU);
+  const t = p.parseImuTelemetry(frame.payload);
+  assert.equal(t.state, p.ImuState.Running);
+  assert.equal(t.flags, p.IMU_FLAGS.zeroed | p.IMU_FLAGS.calibrationStored | p.IMU_FLAGS.calibrated);
+  assert.deepEqual([t.faults, t.warnings, t.sequence], [1, 1 << 5, 77]);
+  assert.deepEqual(t.calibration, { sys: 3, gyro: 2, accel: 1, mag: 0 });
+  assert.deepEqual(t.quaternion, [0.5, -0.5, 0.25, 0.75]);
+  assert.deepEqual([t.roll, t.pitch, t.yaw], [10.5, -20.25, 170]);
+  assert.deepEqual(t.acceleration, [0.125, -9.75, 1.5]);
+  assert.deepEqual(t.rate, [-3.25, 0, 720]);
+  assert.equal(t.temperature, -12.3);
+
+  assert.equal(reply.id, p.FN_REPLY + p.DEFAULT_IMU_NODE);
+  const info = p.parseInfo(reply.payload.subarray(1));
+  assert.equal(info.device, p.DEVICE.Imu);
+  assert.deepEqual([info.firmware, info.nodeId, info.encoderType, info.uid], ['2.0.0', 100, 1, 'b0b1b2b3b4b5b6b7b8b9babb']);
 });
 
 test('resynchronises after a torn frame and rejects corruption', () => {

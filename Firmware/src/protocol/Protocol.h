@@ -44,6 +44,12 @@ constexpr uint16_t canId(Function fn, uint8_t node) {
 }
 inline constexpr uint16_t kBroadcastId = 0x000;
 
+// ---- Device classes (last byte of GetInfo) -------------------------------------
+// Other Tercio nodes share the bus and this protocol; the Tercio IMU
+// (Tercio-imu Firmware/src/protocol/Protocol.h) is device class 1.
+inline constexpr uint8_t kDeviceS1 = 0;
+inline constexpr uint8_t kDeviceImu = 1;
+
 // ---- Commands (host -> node) -------------------------------------------------
 enum class Cmd : uint8_t {
   // System
@@ -92,6 +98,7 @@ enum class Status : uint8_t {
 // ---- Node-originated frame types -------------------------------------------------
 inline constexpr uint8_t kFrameTelemetry = 0x01;
 inline constexpr uint8_t kFrameFault = 0x02;
+inline constexpr uint8_t kFrameImu = 0x03;  // reserved: Tercio IMU telemetry
 
 // ---- Axis state -------------------------------------------------------------------
 enum class AxisState : uint8_t {
@@ -205,10 +212,11 @@ enum class HomingMode : uint8_t { SwitchMin = 0, SwitchMax = 1, SensorlessNeg = 
 inline constexpr uint8_t kTelemetrySize = 1 + 1 + 2 + 2 + 8 + 8 + 4 + 4 + 2 + 2 + 1 + 1 + 1;
 static_assert(kTelemetrySize == 37, "update the host libraries when the telemetry layout changes");
 
-// GetInfo reply data, 20 bytes:
+// GetInfo reply data, 21 bytes:
 //   u8 protocol  u8 fw major  u8 fw minor  u8 fw patch  u8 hw revision
-//   u8 encoder type  u8 node id  u8 info flags  u8 uid[12]
-inline constexpr uint8_t kInfoSize = 20;
+//   u8 encoder type  u8 node id  u8 info flags  u8 uid[12]  u8 device class
+// (Hosts treat a 20-byte reply as device class 0.)
+inline constexpr uint8_t kInfoSize = 21;
 inline constexpr uint8_t kUidSize = 12;
 inline constexpr uint8_t kInfoCrystalClock = 1u << 0;  // info flags: core runs from the crystal
 
@@ -292,6 +300,7 @@ struct InfoData {
   uint8_t nodeId = 0;
   uint8_t flags = 0;
   uint8_t uid[kUidSize] = {};
+  uint8_t device = kDeviceS1;
 };
 
 // Writes the GetInfo reply data; `out` holds at least kInfoSize bytes.
@@ -300,6 +309,7 @@ inline uint8_t encodeInfo(const InfoData& info, uint8_t* out) {
   w.put(kProtocolVersion).put(info.fwMajor).put(info.fwMinor).put(info.fwPatch);
   w.put(info.hardwareRevision).put(info.encoderType).put(info.nodeId).put(info.flags);
   w.bytes(info.uid, kUidSize);
+  w.put(info.device);
   return w.size();
 }
 

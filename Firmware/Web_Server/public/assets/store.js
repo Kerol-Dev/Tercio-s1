@@ -26,9 +26,9 @@ export const state = {
   bus: null,
   adapter: { info: null, status: null, rate: { toCan: 0, fromCan: 0 }, seenAt: 0, previous: null },
   nodes: new Map(),     // node id -> motor
-  imus: new Map(),      // CAN id -> { imu, seenAt }
+  imus: new Map(),      // node id -> Tercio IMU
   discovered: new Map(),  // uid -> info (latest scan)
-  selected: 'fleet',    // 'fleet' | 'adapter' | node id | 'imu:<id>'
+  selected: 'fleet',    // 'fleet' | 'adapter' | motor node id | 'imu:<node id>'
   tab: load('tab', 'control'),
   unit: load('unit', 'deg'),
   theme: load('theme', 'system'),
@@ -88,8 +88,15 @@ export function log(text, level = 'info') {
 }
 
 export function nameOf(node) {
-  return (node.info && state.names[node.info.uid]) || `Axis ${node.id}`;
+  return (node.info && state.names[node.info.uid]) || `${node.kind === 'imu' ? 'IMU' : 'Axis'} ${node.id}`;
 }
+
+// What the stage and change events call a device.
+export const keyOf = node => (node.kind === 'imu' ? `imu:${node.id}` : node.id);
+const labelOf = id => {
+  const device = state.nodes.get(id) ?? state.imus.get(id);
+  return device ? nameOf(device) : `Node ${id}`;
+};
 
 export function rename(node, name) {
   if (!node.info) return;
@@ -164,7 +171,7 @@ function wire(bus) {
   bus.addEventListener('info', ({ detail }) => onInfo(detail.node, detail.info));
   bus.addEventListener('fault', ({ detail }) => onFault(detail));
   bus.addEventListener('adapter-status', ({ detail }) => onAdapterStatus(detail));
-  bus.addEventListener('imu', ({ detail }) => onImu(detail));
+  bus.addEventListener('imu-telemetry', ({ detail }) => onImuTelemetry(detail.node, detail.telemetry));
   bus.addEventListener('close', () => {
     if (state.bus !== bus) return;
     toast('The adapter was disconnected.', 'warn');
@@ -177,7 +184,8 @@ function wire(bus) {
 function motor(id) {
   let node = state.nodes.get(id);
   if (!node) {
-    node = { id, t: null, info: null, seenAt: 0, history: new History(), params: null, loading: false, unsaved: false,
+    state.imus.delete(id);  // the ID moved from an IMU to a motor
+    node = { kind: 'motor', id, t: null, info: null, seenAt: 0, history: new History(), params: null, loading: false, unsaved: false,
       drafts: {}, ui: {}, lastSeq: null, frames: 0, lost: 0, rateHz: 0, rateWindow: [] };
     state.nodes.set(id, node);
     changed('nodes', id);
@@ -234,6 +242,7 @@ function procedureEnded(node, state, t) {
 function onInfo(id, info) {
   if (!info) return;
   state.discovered.set(info.uid, { ...info, nodeId: id });
+  if (info.device === p.DEVICE.Imu) return onImuInfo(id, info);
   // The same board under another ID means it was re-addressed: drop the stale entry.
   let moved = false;
   for (const [otherId, other] of state.nodes) {
@@ -251,9 +260,10 @@ function onInfo(id, info) {
 }
 
 function onFault({ node, faults }) {
-  const names = p.FAULTS.filter(f => faults & f.bit).map(f => f.name);
+  const table = state.imus.has(node) ? p.IMU_FAULTS : p.FAULTS;
+  const names = table.filter(f => faults & f.bit).map(f => f.name);
   if (!names.length) return;
-  const label = state.nodes.get(node) ? nameOf(state.nodes.get(node)) : `Axis ${node}`;
+  const label = labelOf(node);
   toast(`${label}: ${names.join(', ')}`, 'bad', 6000);
   log(`${label}: ${names.join(', ')}`, 'bad');
 }
@@ -275,10 +285,135 @@ function onAdapterStatus(status) {
   if (firstOrChanged) changed('adapter');
 }
 
-function onImu({ id, imu }) {
-  const first = !state.imus.has(id);
-  state.imus.set(id, { imu, seenAt: performance.now() });
-  if (first) changed('nodes');
+// ---- Tercio IMU ------------------------------------------------------------------------------------------
+function imuDevice(id) {
+  let imu = state.imus.get(id);
+  if (!imu) {
+    state.nodes.delete(id);  // the ID moved from a motor to an IMU
+    imu = { kind: 'imu', id, t: null, info: null, seenAt: 0, history: new History(6000, ['roll', 'pitch', 'yaw']),
+      params: null, loading: false, unsaved: false, drafts: {}, ui: {}, lastSeq: null, frames: 0, lost: 0, rateHz: 0, rateWindow: [] };
+    state.imus.set(id, imu);
+    changed('nodes', `imu:${id}`);
+    state.bus?.request(id, p.Cmd.GetInfo).catch(() => {});
+  }
+  return imu;
+}
+
+const imuSignature = t => `${t.state}|${t.flags}|${t.faults}|${t.warnings}|${t.calibration.sys}${t.calibration.gyro}${t.calibration.accel}${t.calibration.mag}`;
+
+function onImuTelemetry(id, t) {
+  const imu = imuDevice(id);
+  const now = performance.now();
+  const previous = imu.t;
+  imu.t = t;
+  imu.seenAt = now;
+  imu.frames++;
+  if (imu.lastSeq !== null) imu.lost += (t.sequence - imu.lastSeq - 1 + 256) & 0xff;
+  imu.lastSeq = t.sequence;
+  imu.rateWindow.push(now);
+  while (imu.rateWindow[0] < now - 1000) imu.rateWindow.shift();
+  imu.rateHz = imu.rateWindow.length;
+  imu.history.push(now, { roll: t.roll, pitch: t.pitch, yaw: t.yaw });
+  if (!previous || imuSignature(previous) !== imuSignature(t)) changed('node', `imu:${id}`);
+}
+
+function onImuInfo(id, info) {
+  for (const [otherId, other] of state.imus) {
+    if (otherId !== id && other.info?.uid === info.uid) {
+      state.imus.delete(otherId);
+      if (state.selected === `imu:${otherId}`) state.selected = `imu:${id}`;
+    }
+  }
+  const imu = imuDevice(id);
+  const first = !imu.info;
+  imu.info = info;
+  if (first) changed('nodes', `imu:${id}`);
+}
+
+export const imuZero = (id, mode = p.ZERO_ALL) => run(id, p.ImuCmd.Zero, Uint8Array.of(mode)).then(ok).then(done => {
+  const imu = state.imus.get(id);
+  if (done && imu) {
+    imu.unsaved = true;
+    toast(mode === p.ZERO_HEADING ? `${nameOf(imu)}: heading zeroed` : `${nameOf(imu)}: this attitude is now zero`, 'accent');
+    changed('node', `imu:${id}`);
+  }
+  return done;
+});
+
+export const imuClearZero = id => run(id, p.ImuCmd.ClearZero).then(ok).then(done => {
+  const imu = state.imus.get(id);
+  if (done && imu) imu.unsaved = true;
+  changed('node', `imu:${id}`);
+  return done;
+});
+
+export async function imuSaveCalibration(id) {
+  const imu = state.imus.get(id);
+  if (!ok(await run(id, p.ImuCmd.SaveCalibration, undefined, { timeout: 1500 }))) return false;
+  if (imu) imu.unsaved = false;  // the save writes every setting, not just the calibration
+  toast(`${nameOf(imu)}: calibration saved. It is restored at every power-up.`, 'good', 5000);
+  changed('node', `imu:${id}`);
+  return true;
+}
+
+export async function imuSave(id) {
+  const imu = state.imus.get(id);
+  if (!ok(await run(id, p.Cmd.SaveConfig, undefined, { timeout: 1500 }))) return false;
+  if (imu) imu.unsaved = false;
+  toast(`${nameOf(imu)}: settings saved to the IMU`);
+  changed('params', `imu:${id}`);
+  return true;
+}
+
+export async function imuLoadParams(id) {
+  const imu = state.imus.get(id);
+  if (!imu || imu.loading) return;
+  imu.loading = true;
+  changed('params', `imu:${id}`);
+  const params = {};
+  for (const def of p.IMU_PARAMS) {
+    const data = await run(id, p.Cmd.GetParam, Uint8Array.of(def.id), { quiet: true, match: sameParam(def) });
+    if (data && data.length >= 5) params[def.key] = p.decodeParamValue(def, data, 1);
+  }
+  imu.params = params;
+  imu.loading = false;
+  changed('params', `imu:${id}`);
+}
+
+// Writes one IMU parameter; resolves with the value applied, or null.
+export async function imuSetParam(id, key, value) {
+  const def = p.IMU_PARAM_BY_KEY.get(key);
+  const data = await run(id, p.Cmd.SetParam, Uint8Array.of(def.id, ...p.encodeParamValue(def, value)), { match: sameParam(def) });
+  if (!data) return null;
+  const applied = p.decodeParamValue(def, data, 1);
+  const imu = state.imus.get(id);
+  if (!imu) return applied;
+  imu.unsaved = true;
+  if (key === 'nodeId' && applied !== id) {
+    state.imus.delete(id);
+    imu.id = applied;
+    state.imus.set(applied, imu);
+    if (imu.params) imu.params.nodeId = applied;
+    if (state.selected === `imu:${id}`) state.selected = `imu:${applied}`;
+    toast(`Now node ${applied}. Save to keep it after a restart.`, 'accent');
+    changed();
+    return applied;
+  }
+  if (imu.params) imu.params[key] = applied;
+  changed('params', `imu:${id}`);
+  return applied;
+}
+
+export async function imuFactoryReset(id) {
+  const imu = state.imus.get(id);
+  if (!ok(await run(id, p.Cmd.FactoryReset))) return false;
+  if (imu) {
+    imu.drafts = {};
+    imu.unsaved = true;
+  }
+  await imuLoadParams(id);
+  toast('Defaults restored, zero and stored calibration cleared. Save to keep them.', 'accent');
+  return true;
 }
 
 // ---- Commands -------------------------------------------------------------------------------------------
@@ -287,7 +422,7 @@ async function run(node, cmd, payload, { quiet = false, timeout, match } = {}) {
   try {
     return await state.bus.request(node, cmd, payload, { timeout, match });
   } catch (error) {
-    const label = state.nodes.get(node) ? nameOf(state.nodes.get(node)) : `Axis ${node}`;
+    const label = labelOf(node);
     const message = error instanceof CommandError ? error.message : String(error);
     if (!quiet) toast(`${label}: ${message}`, error.status === 'timeout' ? 'warn' : 'bad', 5000);
     log(`${label}: ${message}`, 'warn');
@@ -463,8 +598,4 @@ export async function adapterBootloader() {
   await state.bus?.adapter(p.AdapterOp.EnterBootloader).catch(() => null);
   toast('The adapter restarted into its USB update mode.', 'accent', 8000);
   await disconnect();
-}
-
-export function imuZero(id) {
-  state.bus?.send(id, p.IMU_RESET_ORIENTATION);
 }

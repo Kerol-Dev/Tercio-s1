@@ -156,10 +156,11 @@ export class Dial {
 // ---- Strip chart -------------------------------------------------------------------------
 // Ring buffer of samples; draws the last `window` seconds of one or two series.
 export class History {
-  constructor(capacity = 8000) {  // 80 s at 100 Hz, 30 s up to 250 Hz
+  // Motor series by default; the IMU keeps roll, pitch and yaw.
+  constructor(capacity = 8000, keys = ['position', 'target', 'velocity', 'error']) {  // 80 s at 100 Hz
     this.capacity = capacity;
     this.t = new Float64Array(capacity);
-    this.series = { position: new Float64Array(capacity), target: new Float64Array(capacity), velocity: new Float32Array(capacity), error: new Float32Array(capacity) };
+    this.series = Object.fromEntries(keys.map(key => [key, new Float64Array(capacity)]));
     this.head = 0;
     this.count = 0;
   }
