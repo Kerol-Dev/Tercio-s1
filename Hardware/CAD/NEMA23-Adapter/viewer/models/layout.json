@@ -1,0 +1,64 @@
+{
+ "thickness": 6.34,
+ "z_pcb": 5.34,
+ "z_top": 6.34,
+ "magnet_top": 2.5,
+ "as5600_package": 3.5,
+ "air_gap": 1.0,
+ "parts_clearance": 2.55,
+ "bolt_pattern": 47.14,
+ "s1_holes": [
+  [
+   -15.3,
+   -15.3
+  ],
+  [
+   -15.288,
+   15.346
+  ],
+  [
+   15.3,
+   -15.352
+  ],
+  [
+   15.3,
+   15.3
+  ]
+ ],
+ "body_length": 56.0,
+ "frame": 56.4,
+ "shaft": [
+  8.0,
+  21.0
+ ],
+ "magnet": [
+  6.0,
+  2.5
+ ],
+ "plate": 56.0,
+ "plate_cut": 42.800000000000004,
+ "motor_screws": [
+  [
+   23.57,
+   14.5
+  ],
+  [
+   23.57,
+   -14.5
+  ],
+  [
+   -23.57,
+   14.5
+  ],
+  [
+   -23.57,
+   -14.5
+  ]
+ ],
+ "motor_screw": "M3",
+ "plate_screw_l": 10.0,
+ "screw_engagement": 3.66,
+ "min_wall": 1.64,
+ "s1_rot": 90,
+ "mass_g": 23.3
+}
