@@ -1,7 +1,9 @@
-// Cloudflare Pages hosting for the Tercio Control panel (static files in ./public).
-// Deploy from this folder with `npx wrangler pages deploy`.
+// Tercio Control on Cloudflare Workers (static assets only, no Worker code),
+// served at control.terciolabs.com. Deploy from this folder: npx wrangler deploy
 {
   "name": "tercio-control",
   "compatibility_date": "2026-09-30",
-  "pages_build_output_dir": "./public"
+  "routes": [{ "pattern": "control.terciolabs.com", "custom_domain": true }],
+  "assets": { "directory": "./public" },
+  "observability": { "enabled": true }
 }
