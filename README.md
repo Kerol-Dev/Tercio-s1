@@ -19,7 +19,7 @@ Drive it from your browser, from Python, from Arduino, or from the step/dir cont
 ![Bus](https://img.shields.io/badge/bus-CAN_FD_·_2.5_Mbit%2Fs-2f5be6?style=flat-square)
 ![Build](https://img.shields.io/badge/build-PlatformIO-f5822a?style=flat-square)
 
-**Launching December 1, 2026** · [Join the waitlist →](https://terciolabs.com)
+**Coming soon** · [Join the launch list →](https://terciolabs.com)
 
 </div>
 
@@ -218,7 +218,7 @@ Github_Files/Images/  images used in this README
 
 ## Availability
 
-Tercio S1 and Tercio FD launch on **December 1, 2026**. [Join the waitlist](https://terciolabs.com) to hear first.
+Tercio S1 and Tercio FD are coming soon. [Join the launch list](https://terciolabs.com) to hear first, with 20% off your first order.
 
 ## License
 
