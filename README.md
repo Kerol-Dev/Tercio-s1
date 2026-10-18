@@ -138,7 +138,7 @@ The source is in [`Firmware/Web_Server`](Firmware/Web_Server): plain ES modules 
 ```python
 from TercioBridge import Bus, Stepper, Unit
 
-with Bus() as bus:                       # first serial port, or Bus("COM5")
+with Bus() as bus:                       # finds the Tercio FD, or Bus("COM5")
     for info in bus.discover():
         print(info)
     motor = Stepper(bus, 1, unit=Unit.DEGREES)

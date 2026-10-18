@@ -9,7 +9,7 @@ Quick start::
 
     from TercioBridge import Bus, Stepper, Unit
 
-    with Bus() as bus:                       # first serial port, or Bus("COM5")
+    with Bus() as bus:                       # finds the Tercio FD, or Bus("COM5")
         for info in bus.discover():
             print(info)
         motor = Stepper(bus, 1, unit=Unit.DEGREES)
@@ -323,6 +323,9 @@ def _decode_param(param: Param, raw: bytes) -> Union[float, int, bool]:
 # ------------------------------------------------------------ serial framing
 
 ADAPTER_ID = 0x800  # serial id of the adapter itself (outside the 11-bit CAN range)
+# The Tercio FD's USB ID: USBD_VID / USBD_PID in Tercio-fdcan Firmware/platformio.ini.
+TERCIO_FD_VID = 0x1209
+TERCIO_FD_PID = 0x0011
 MAX_PAYLOAD = 63
 
 
@@ -444,7 +447,12 @@ class _Pending:
 
 
 class Bus:
-    """Serial connection to the USB-CAN adapter, shared by all nodes on the bus."""
+    """Serial connection to the USB-CAN adapter, shared by all nodes on the bus.
+
+    ``Bus()`` opens the Tercio FD it finds by its USB ID. With several adapters
+    plugged in it takes the first of :meth:`find_adapters` (sorted by port
+    name), so name the port instead: ``Bus("COM5")``, ``Bus("/dev/ttyACM0")``.
+    """
 
     def __init__(self, port: Optional[str] = None, baud: int = 115200, timeout: float = 0.2):
         self.port = port
@@ -489,11 +497,17 @@ class Bus:
         self.close()
 
     @staticmethod
+    def find_adapters() -> List[str]:
+        """The serial ports of every Tercio FD plugged in, sorted by port name."""
+        return sorted(p.device for p in list_ports.comports() if (p.vid, p.pid) == (TERCIO_FD_VID, TERCIO_FD_PID))
+
+    @staticmethod
     def _first_port() -> str:
-        ports = list(list_ports.comports())
-        if not ports:
-            raise TercioError("no serial port found")
-        return ports[0].device
+        adapters = Bus.find_adapters()
+        if adapters:
+            return adapters[0]
+        seen = ", ".join(sorted(p.device for p in list_ports.comports())) or "none"
+        raise TercioError(f"no Tercio FD found (serial ports: {seen})")
 
     # -- transmit
     def send(self, can_id: int, opcode: int, payload: bytes = b"") -> None:
